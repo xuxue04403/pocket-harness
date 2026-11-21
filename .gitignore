@@ -1,0 +1,53 @@
+# 忽略构建产物与本地工具链
+
+# Flutter / Dart
+app/.dart_tool/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/android/.gradle/
+app/android/local.properties
+app/windows/flutter/ephemeral/
+packages/dsh_link/.dart_tool/
+packages/dsh_link/build/
+**/*.g.dart.tmp
+
+# Node
+node_modules/
+relay/node_modules/
+probe/node_modules/
+
+# 本地工具链（体积大、可重建，不入库）
+toolchain/
+
+# 参考仓库（仅本地阅读，且其中 dsh-go 是 AGPL，绝不入库）
+ref/
+
+# 探针产生的临时数据：含真实会话快照与配对票据
+probe/samples/
+probe/_live-ticket.txt
+probe/_probe-identity.txt
+probe/_host.err
+probe/_host.out
+probe/_shot*.png
+
+# 防止私钥/凭据误入库
+*.pem
+*.key
+.credentials.yaml
+
+# 编辑器与 agent 工具产出的本地状态
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+.memsearch/
+.probe
+
+# 配对票据含 secret，绝不入库
+probe/_live-ticket*.txt
+
+# 探针日志会captured配对码，不入库
+probe/_*.out
+probe/_*.err

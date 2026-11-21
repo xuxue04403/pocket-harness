@@ -1,0 +1,15 @@
+{
+  "name": "pocket-harness-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A dumb relay that lets a phone reach a Pocket Harness Host across the internet.",
+  "license": "MIT",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node run.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.23.0"
+  }
+}

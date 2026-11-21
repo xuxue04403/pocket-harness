@@ -1,0 +1,26 @@
+{
+  "name": "dsh-pocketharness-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pocket Harness Host: lets a phone drive this harness over an encrypted LAN link",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

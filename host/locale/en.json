@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Pocket Harness Host",
+    "description": "Drives this harness from a phone over an encrypted LAN link.",
+    "detail": "docs/DETAIL.md"
+  }
+}

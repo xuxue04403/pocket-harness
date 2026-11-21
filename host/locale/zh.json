@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Pocket Harness 主机端",
+    "description": "让手机通过加密的局域网链路操控本机 Harness。",
+    "detail": "docs/DETAIL.md"
+  }
+}

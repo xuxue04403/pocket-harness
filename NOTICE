@@ -1,0 +1,43 @@
+Pocket Harness
+Copyright (c) 2026 Pocket Harness contributors
+Licensed under the MIT License (see LICENSE).
+
+This product includes work derived from, or validated against, the following
+third-party projects. No code from any AGPL-licensed project is included.
+
+--------------------------------------------------------------------------------
+ds-harness-remote  —  MIT
+https://github.com/liguobao/ds-harness-remote
+Copyright (c) 2026 DSH Remote contributors
+
+Used as follows:
+  * fixtures/crypto/v1/noise-ik.json — the Noise IK golden vector. It is copied
+    verbatim into probe/noise-fixture.b64 and packages/dsh_link/test/vectors/,
+    and both our Dart and JavaScript implementations are tested against it so
+    interoperability with the reference implementation is proven bit for bit.
+  * Design ideas only, no source files copied: the Noise IK prologue binding,
+    the DSHF fragmentation header layout, and the "Host only dials out" model
+    for reaching a machine that has no public address.
+
+--------------------------------------------------------------------------------
+DeepSeek Harness  —  MIT
+https://github.com/deepseek-ai
+The Host plugin is written against the public plugin API and the Typert API
+gateway of the installed Harness. No Harness source is bundled here.
+
+--------------------------------------------------------------------------------
+Flutter, Dart  —  BSD 3-Clause
+https://flutter.dev
+
+--------------------------------------------------------------------------------
+mobile_scanner  —  MIT            https://pub.dev/packages/mobile_scanner
+shared_preferences  —  BSD 3-Clause  https://pub.dev/packages/shared_preferences
+crypto (Dart)  —  BSD 3-Clause     https://pub.dev/packages/crypto
+ws (Node)  —  MIT                  https://github.com/websockets/ws
+
+--------------------------------------------------------------------------------
+A note on dsh-Go
+https://github.com/ccch1mneyyy/dsh-Go is AGPL-3.0. This project does not use its
+code, its name, or its artwork. Its documentation was read to learn what is
+feasible on HarmonyOS (for example that Flutter's HarmonyOS AOT toolchain only
+ships for macOS arm64) — facts, not code.

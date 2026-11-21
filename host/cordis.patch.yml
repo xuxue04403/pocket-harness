@@ -1,0 +1,3 @@
+- insert:
+    - id: pocket-harness-host
+      name: dsh-pocketharness-host
