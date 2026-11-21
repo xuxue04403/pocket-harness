@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dsh_link/dsh_link.dart';
 
@@ -329,6 +331,58 @@ class ModelSelection {
   }
 }
 
+/// One image a message refers to, addressed by the Host's attachment store.
+///
+/// The bytes are not in the event: DSH stores the image once and records a
+/// reference, and the phone fetches it with `session/attachment` when it needs
+/// to paint it. That keeps history small and lets the same image be reused.
+class ImageAttachment {
+  const ImageAttachment({
+    required this.attachmentId,
+    required this.mediaType,
+    required this.bytes,
+    this.width,
+    this.height,
+    this.name,
+  });
+
+  final String attachmentId;
+  final String mediaType;
+  final int bytes;
+  final int? width;
+  final int? height;
+  final String? name;
+
+  static ImageAttachment? fromJson(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    final id = value['attachmentId'];
+    final mediaType = value['mediaType'];
+    if (id is! String || id.isEmpty || mediaType is! String) return null;
+    final size = value['bytes'];
+    final width = value['width'];
+    final height = value['height'];
+    final name = value['name'];
+    return ImageAttachment(
+      attachmentId: id,
+      mediaType: mediaType,
+      bytes: size is num ? size.toInt() : 0,
+      width: width is num ? width.toInt() : null,
+      height: height is num ? height.toInt() : null,
+      name: name is String && name.isNotEmpty ? name : null,
+    );
+  }
+
+  /// The reference shape `session/attachment` expects back.
+  Map<String, Object?> toJson() => {
+    'attachmentId': attachmentId,
+    'mediaType': mediaType,
+    'bytes': bytes,
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
+    if (name != null) 'name': name,
+  };
+}
+
 /// One rendered row of a session transcript.
 ///
 /// The transcript is built from DSH session events rather than from a bespoke
@@ -341,19 +395,33 @@ sealed class TranscriptRow {
 }
 
 class UserRow extends TranscriptRow {
-  const UserRow({required super.seq, required this.text, this.injected = false});
+  const UserRow({
+    required super.seq,
+    required this.text,
+    this.injected = false,
+    this.images = const [],
+  });
 
   final String text;
 
   /// Whether DSH attributed this to the agent rather than to the person.
   final bool injected;
+
+  /// Images the person attached, in the order they were sent.
+  final List<ImageAttachment> images;
 }
 
 class AssistantRow extends TranscriptRow {
-  const AssistantRow({required super.seq, required this.text, this.reasoning});
+  const AssistantRow({
+    required super.seq,
+    required this.text,
+    this.reasoning,
+    this.images = const [],
+  });
 
   final String text;
   final String? reasoning;
+  final List<ImageAttachment> images;
 }
 
 class ToolCallRow extends TranscriptRow {
@@ -417,20 +485,28 @@ TranscriptRow? _rowOf(Object? record) {
   switch (type) {
     case 'user/message':
       final text = _textOf(payload['content']);
-      if (text.isEmpty) return null;
+      final images = _imagesOf(payload['content']);
+      if (text.isEmpty && images.isEmpty) return null;
       final source = payload['source'];
       final kind = source is Map<String, Object?> ? '${source['kind']}' : '';
-      return UserRow(seq: seq.toInt(), text: text, injected: _injectedSources.contains(kind));
+      return UserRow(
+        seq: seq.toInt(),
+        text: text,
+        injected: _injectedSources.contains(kind),
+        images: images,
+      );
     case 'assistant/message':
       final message = payload['message'];
       final content = message is Map<String, Object?> ? message['content'] : null;
       final text = _textOf(content, blockType: 'text');
       final reasoning = _textOf(content, blockType: 'reasoning');
-      if (text.isEmpty && reasoning.isEmpty) return null;
+      final images = _imagesOf(content);
+      if (text.isEmpty && reasoning.isEmpty && images.isEmpty) return null;
       return AssistantRow(
         seq: seq.toInt(),
         text: text,
         reasoning: reasoning.isEmpty ? null : reasoning,
+        images: images,
       );
     case 'tool/call':
       final name = payload['name'];
@@ -474,6 +550,19 @@ String _textOf(Object? content, {String blockType = 'text'}) {
     if (text is String && text.isNotEmpty) parts.add(text);
   }
   return parts.join('\n').trim();
+}
+
+/// Collects the image references of a content array.
+List<ImageAttachment> _imagesOf(Object? content) {
+  if (content is! List) return const [];
+  final images = <ImageAttachment>[];
+  for (final block in content) {
+    if (block is! Map<String, Object?>) continue;
+    if (block['type'] != 'image') continue;
+    final image = ImageAttachment.fromJson(block['attachment']);
+    if (image != null) images.add(image);
+  }
+  return images;
 }
 
 /// The assistant text of one attempt that is still being written.
@@ -662,17 +751,45 @@ class HostLink {
   ///
   /// [mode] is `queue` while the agent is working and `steer` to interrupt it,
   /// mirroring the desktop composer's two buttons.
-  Future<void> prompt(String sessionId, String text, {String mode = 'queue'}) async {
+  Future<void> prompt(String sessionId, String text, {String mode = 'queue'}) {
+    return promptContent(sessionId, [
+      {'type': 'text', 'text': text},
+    ], mode: mode);
+  }
+
+  /// Sends one prompt with arbitrary content parts.
+  ///
+  /// DSH accepts text and image parts together in one message; the Host promotes
+  /// the base64 payload to a durable attachment, so this is the same path the
+  /// desktop uses for drag-and-drop.
+  Future<void> promptContent(
+    String sessionId,
+    List<Map<String, Object?>> content, {
+    String mode = 'queue',
+  }) async {
     await _client.rpc.call('session/prompt', {
       'request': {
         'requestId': newDeviceId(),
         'sessionId': sessionId,
         'mode': mode,
-        'content': [
-          {'type': 'text', 'text': text},
-        ],
+        'content': content,
       },
     });
+  }
+
+  /// Fetches the bytes behind one image reference.
+  ///
+  /// The Host answers with base64 because the wire is JSON; the phone only ever
+  /// asks for images it is about to paint.
+  Future<Uint8List> attachment(String sessionId, ImageAttachment image) async {
+    final value = await _client.rpc.call('session/attachment', {
+      'request': {'sessionId': sessionId, 'attachment': image.toJson()},
+    });
+    final data = value['data'];
+    if (data is! String || data.isEmpty) {
+      throw StateError('the Host did not return the image bytes');
+    }
+    return base64Decode(data);
   }
 
   /// Stops the running turn, keeping the session usable.

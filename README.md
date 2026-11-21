@@ -34,6 +34,7 @@
 | 运行中逐字流式显示 | ✅ 思考与正文分栏 |
 | 工具调用与结果卡片 | ✅ |
 | 工具审批与提问（在手机上回答） | ✅ 拒答即 fail-closed，也可转回电脑 |
+| 发送与查看图片 | ✅ 从相册选图随消息发出，历史里的图片按需取回 |
 | Android | ✅ 模拟器与构建均通过 |
 | HarmonyOS 7.0 | ⏳ 二期，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
 | WebRTC P2P / TURN | ⏳ 二期（局域网直连 + 中继已覆盖当前场景） |
@@ -98,7 +99,7 @@ cd packages\dsh_link; dart analyze; dart test
 # Host 插件与中继：12 个测试
 node --test host
 
-# Flutter 客户端：42 个测试
+# Flutter 客户端：49 个测试
 cd app; flutter analyze; flutter test
 ```
 

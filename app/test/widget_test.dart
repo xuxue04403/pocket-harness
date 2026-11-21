@@ -1,6 +1,10 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:dsh_link/dsh_link.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pocket_harness/src/dsh/host_link.dart';
+import 'package:pocket_harness/src/dsh/outgoing_image.dart';
 import 'package:pocket_harness/src/dsh/questions.dart';
 import 'package:pocket_harness/src/dsh/tool_labels.dart';
 
@@ -526,6 +530,107 @@ void _questionTests() {
     test('drops entries without a name', () {
       expect(SkillEntry.fromJson({'description': 'nameless'}), isNull);
       expect(SkillEntry.fromJson('canvas'), isNull);
+    });
+  });
+
+  group('outgoing images', () {
+    test('maps the extensions DSH accepts', () {
+      expect(OutgoingImage.mediaTypeFor(r'C:\pics\shot.PNG'), 'image/png');
+      expect(OutgoingImage.mediaTypeFor('/tmp/a.jpeg'), 'image/jpeg');
+      expect(OutgoingImage.mediaTypeFor('/tmp/a.jpg'), 'image/jpeg');
+      expect(OutgoingImage.mediaTypeFor('/tmp/a.webp'), 'image/webp');
+      expect(OutgoingImage.mediaTypeFor('/tmp/a.gif'), 'image/gif');
+    });
+
+    test('rejects anything the Host would refuse', () {
+      expect(OutgoingImage.mediaTypeFor('/tmp/a.bmp'), isNull);
+      expect(OutgoingImage.mediaTypeFor('/tmp/a.heic'), isNull);
+      expect(OutgoingImage.mediaTypeFor('/tmp/noextension'), isNull);
+      expect(OutgoingImage.mediaTypeFor('/tmp/trailing.'), isNull);
+      expect(OutgoingImage.mediaTypeFor(null), isNull);
+    });
+
+    test('encodes bytes as the inline content part', () {
+      final part = OutgoingImage(
+        bytes: Uint8List.fromList([1, 2, 3, 4]),
+        mediaType: 'image/png',
+        name: 'tiny.png',
+      ).toPart();
+      expect(part['type'], 'image');
+      expect(part['mediaType'], 'image/png');
+      expect(part['data'], base64Encode([1, 2, 3, 4]));
+      expect(part['name'], 'tiny.png');
+    });
+
+    test('omits the name when the picker did not supply one', () {
+      final part = OutgoingImage(
+        bytes: Uint8List.fromList([9]),
+        mediaType: 'image/gif',
+      ).toPart();
+      expect(part.containsKey('name'), isFalse);
+    });
+  });
+
+  group('image rows', () {
+    test('keeps a user message that only carries a picture', () {
+      final rows = buildTranscript([
+        _event('user/message', 1, {
+          'content': [
+            {
+              'type': 'image',
+              'attachment': {
+                'attachmentId': 'a1',
+                'mediaType': 'image/png',
+                'bytes': 408,
+                'width': 64,
+                'height': 64,
+              },
+            },
+          ],
+          'source': {'kind': 'human'},
+        }),
+      ]);
+      final row = rows.single;
+      expect(row, isA<UserRow>());
+      expect((row as UserRow).text, '');
+      expect(row.images.single.attachmentId, 'a1');
+      expect(row.images.single.width, 64);
+    });
+
+    test('keeps the picture alongside the text', () {
+      final rows = buildTranscript([
+        _event('assistant/message', 2, {
+          'turn': 1,
+          'step': 1,
+          'message': {
+            'id': 'm1',
+            'role': 'assistant',
+            'content': [
+              {'type': 'text', 'text': 'here it is'},
+              {
+                'type': 'image',
+                'attachment': {'attachmentId': 'a2', 'mediaType': 'image/webp', 'bytes': 10},
+              },
+            ],
+          },
+        }),
+      ]);
+      final row = rows.single as AssistantRow;
+      expect(row.text, 'here it is');
+      expect(row.images.single.mediaType, 'image/webp');
+      expect(row.images.single.width, isNull);
+    });
+
+    test('drops an image reference without an id', () {
+      final rows = buildTranscript([
+        _event('user/message', 3, {
+          'content': [
+            {'type': 'image', 'attachment': {'mediaType': 'image/png'}},
+          ],
+          'source': {'kind': 'human'},
+        }),
+      ]);
+      expect(rows, isEmpty);
     });
   });
 }

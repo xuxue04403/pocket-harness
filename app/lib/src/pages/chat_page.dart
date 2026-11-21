@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:image_picker/image_picker.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../dsh/host_link.dart';
+import '../dsh/outgoing_image.dart';
 import '../dsh/questions.dart';
 import '../dsh/tool_labels.dart';
 import 'model_sheet.dart';
@@ -49,6 +52,13 @@ class _ChatPageState extends State<ChatPage> {
   /// the same prompt at the same time, and whichever answers first wins.
   final List<PendingQuestion> _questions = [];
   StreamSubscription<PendingQuestion>? _questionStream;
+
+  /// Images staged for the next prompt.
+  ///
+  /// DSH sends text and images together in one message, so the composer holds
+  /// them until the person presses send; staging also lets them remove one
+  /// without retyping the message.
+  final List<OutgoingImage> _pendingImages = [];
 
   /// The model route this session is on, shown in the app bar.
   ///
@@ -290,17 +300,51 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _send({String mode = 'queue'}) async {
     final text = _composer.text.trim();
-    if (text.isEmpty || _sending) return;
+    final images = List<OutgoingImage>.of(_pendingImages);
+    if ((text.isEmpty && images.isEmpty) || _sending) return;
     setState(() => _sending = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await widget.link.prompt(widget.sessionId, text, mode: mode);
+      await widget.link.promptContent(widget.sessionId, [
+        if (text.isNotEmpty) {'type': 'text', 'text': text},
+        for (final image in images) image.toPart(),
+      ], mode: mode);
       _composer.clear();
+      if (mounted) setState(_pendingImages.clear);
     } on Object catch (error) {
       messenger.showSnackBar(SnackBar(content: Text('$error')));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  /// Picks one image from the gallery and stages it for the next prompt.
+  ///
+  /// The picker returns a path rather than bytes, so this reads the file and
+  /// rejects anything DSH would not accept instead of letting the Host fail the
+  /// whole prompt after the person has already typed a message.
+  Future<void> _pickImage() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final XFile? picked;
+    try {
+      picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 88);
+    } on Object catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('打开相册失败：$error')));
+      return;
+    }
+    if (picked == null || !mounted) return;
+    final file = picked;
+    final mediaType =
+        OutgoingImage.mediaTypeFor(file.path) ?? OutgoingImage.mediaTypeFor(file.name);
+    if (mediaType == null) {
+      messenger.showSnackBar(const SnackBar(content: Text('只支持 PNG、JPEG、WebP、GIF 图片。')));
+      return;
+    }
+    final bytes = await file.readAsBytes();
+    if (!mounted) return;
+    setState(() {
+      _pendingImages.add(OutgoingImage(bytes: bytes, mediaType: mediaType, name: file.name));
+    });
   }
 
   /// Inserts `/name` for the chosen skill, matching what the desktop composer
@@ -381,12 +425,18 @@ class _ChatPageState extends State<ChatPage> {
               onDelegate: (question) => _answerQuestion(question, choice: _Answer.delegate),
             ),
           Expanded(child: _body()),
+          if (_pendingImages.isNotEmpty)
+            _PendingStrip(
+              images: _pendingImages,
+              onRemove: (index) => setState(() => _pendingImages.removeAt(index)),
+            ),
           _Composer(
             controller: _composer,
             sending: _sending,
             onSend: () => _send(),
             onSteer: () => _send(mode: 'steer'),
             onSkill: _insertSkill,
+            onImage: _pickImage,
           ),
         ],
       ),
@@ -408,6 +458,8 @@ class _ChatPageState extends State<ChatPage> {
         if (index < _rows.length) {
           return _TranscriptTile(
             row: _rows[index],
+            link: widget.link,
+            sessionId: widget.sessionId,
             onLoadOlder: index == 0 ? _loadOlder : null,
           );
         }
@@ -517,26 +569,43 @@ class _LiveTile extends StatelessWidget {
 }
 
 class _TranscriptTile extends StatelessWidget {
-  const _TranscriptTile({required this.row, this.onLoadOlder});
+  const _TranscriptTile({
+    required this.row,
+    required this.link,
+    required this.sessionId,
+    this.onLoadOlder,
+  });
 
   final TranscriptRow row;
+  final HostLink link;
+  final String sessionId;
   final VoidCallback? onLoadOlder;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final child = switch (row) {
-      UserRow(:final text, :final injected) => _Bubble(
+      UserRow(:final text, :final injected, :final images) => _Bubble(
         alignEnd: true,
         muted: injected,
-        child: Text(text, style: theme.textTheme.bodyMedium),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (images.isNotEmpty)
+              _AttachmentStrip(sessionId: sessionId, link: link, images: images),
+            if (text.isNotEmpty) Text(text, style: theme.textTheme.bodyMedium),
+          ],
+        ),
       ),
-      AssistantRow(:final text, :final reasoning) => Padding(
+      AssistantRow(:final text, :final reasoning, :final images) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (reasoning != null) _Reasoning(text: reasoning),
+            if (images.isNotEmpty)
+              _AttachmentStrip(sessionId: sessionId, link: link, images: images),
             if (text.isNotEmpty) SelectableText(text, style: theme.textTheme.bodyMedium),
           ],
         ),
@@ -587,6 +656,114 @@ class _TranscriptTile extends StatelessWidget {
           ),
         Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: child),
       ],
+    );
+  }
+}
+
+/// The images a message carries, painted from the Host's attachment store.
+///
+/// The wire never carries image bytes inside an event: DSH stores each image
+/// once and the message records a reference. So each thumbnail is a small
+/// request, cached by attachment id, and a failure shows a labelled box rather
+/// than an invisible gap — a missing picture should say so.
+class _AttachmentStrip extends StatefulWidget {
+  const _AttachmentStrip({required this.sessionId, required this.link, required this.images});
+
+  final String sessionId;
+  final HostLink link;
+  final List<ImageAttachment> images;
+
+  /// Bytes survive a scroll away and back, keyed by the durable attachment id.
+  static final Map<String, Uint8List> _cache = <String, Uint8List>{};
+
+  @override
+  State<_AttachmentStrip> createState() => _AttachmentStripState();
+}
+
+class _AttachmentStripState extends State<_AttachmentStrip> {
+  late List<Future<Uint8List>> _futures = _load();
+
+  List<Future<Uint8List>> _load() {
+    return [
+      for (final image in widget.images)
+        _AttachmentStrip._cache[image.attachmentId] != null
+            ? Future<Uint8List>.value(_AttachmentStrip._cache[image.attachmentId]!)
+            : widget.link.attachment(widget.sessionId, image).then((bytes) {
+                _AttachmentStrip._cache[image.attachmentId] = bytes;
+                return bytes;
+              }),
+    ];
+  }
+
+  @override
+  void didUpdateWidget(covariant _AttachmentStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessionId != widget.sessionId ||
+        oldWidget.images.length != widget.images.length) {
+      _futures = _load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (var index = 0; index < widget.images.length; index += 1)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                width: 140,
+                height: 140,
+                child: FutureBuilder<Uint8List>(
+                  future: _futures[index],
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.all(6),
+                        child: Text(
+                          '图片读取失败',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.error,
+                          ),
+                        ),
+                      );
+                    }
+                    final bytes = snapshot.data;
+                    if (bytes == null) {
+                      return Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        alignment: Alignment.center,
+                        child: const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      );
+                    }
+                    return Image.memory(
+                      bytes,
+                      fit: BoxFit.cover,
+                      // A corrupt image must not take the transcript down.
+                      errorBuilder: (context, error, stack) => Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        alignment: Alignment.center,
+                        child: Text('无法显示', style: theme.textTheme.bodySmall),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -841,6 +1018,7 @@ class _Composer extends StatelessWidget {
     required this.onSend,
     required this.onSteer,
     required this.onSkill,
+    required this.onImage,
   });
 
   final TextEditingController controller;
@@ -848,6 +1026,7 @@ class _Composer extends StatelessWidget {
   final VoidCallback onSend;
   final VoidCallback onSteer;
   final VoidCallback onSkill;
+  final VoidCallback onImage;
 
   @override
   Widget build(BuildContext context) {
@@ -879,6 +1058,11 @@ class _Composer extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             IconButton(
+              onPressed: onImage,
+              icon: const Icon(Icons.image_outlined),
+              tooltip: '插入图片',
+            ),
+            IconButton(
               onPressed: onSkill,
               icon: const Icon(Icons.auto_awesome_outlined),
               tooltip: '插入技能',
@@ -901,6 +1085,71 @@ class _Composer extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The images staged for the next prompt, each removable before sending.
+///
+/// Staging lives above the composer because DSH takes text and images in one
+/// message: the picture has to be visible while the person finishes typing, and
+/// it has to be possible to drop it without clearing the message.
+class _PendingStrip extends StatelessWidget {
+  const _PendingStrip({required this.images, required this.onRemove});
+
+  final List<OutgoingImage> images;
+  final void Function(int index) onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      height: 76,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+        itemCount: images.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final image = images[index];
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.memory(
+                  image.bytes,
+                  width: 68,
+                  height: 68,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stack) => Container(
+                    width: 68,
+                    height: 68,
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    alignment: Alignment.center,
+                    child: Text('无法预览', style: theme.textTheme.bodySmall),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: -6,
+                right: -6,
+                child: IconButton(
+                  onPressed: () => onRemove(index),
+                  iconSize: 16,
+                  visualDensity: VisualDensity.compact,
+                  style: IconButton.styleFrom(
+                    backgroundColor: theme.colorScheme.surface,
+                    side: BorderSide(color: theme.colorScheme.outlineVariant),
+                  ),
+                  icon: const Icon(Icons.close),
+                  tooltip: '移除图片',
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
