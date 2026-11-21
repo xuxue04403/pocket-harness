@@ -9,9 +9,11 @@ import { encodeBase64Url, fromUtf8, utf8 } from '../core/bytes'
 import { x25519PublicKey } from '../core/curve25519'
 import { NoiseIkSession, createNoisePrologue } from '../core/noise'
 import { decodeTicket, encodeTicket } from '../core/pairing'
+import { describeTicket, readTicketText, remainingLabel, ticketRemainingMs } from '../core/pairing_text'
 import { ClientCheckResult, runClientCheck, runPlatformCheck } from '../selfcheck'
 import router from '@ohos.router'
 import type { Context } from '@kit.AbilityKit'
+import pasteboard from '@ohos.pasteboard'
 import { HostStore } from '../storage.ohos'
 
 function hex(bytes: Uint8Array): string {
@@ -37,6 +39,8 @@ struct Index {
   @State detail: string = ''
   @State endpoint: string = '192.168.1.5:48100'
   @State ticketText: string = ''
+  @State ticketNote: string = ''
+  @State ticketWhere: string = ''
 
   build() {
     Column({ space: 12 }) {
@@ -59,7 +63,26 @@ struct Index {
       TextInput({ text: this.ticketText, placeholder: '粘贴 pocketharness://pair?t=... 配对码' })
         .width('100%')
         .fontSize(11)
-        .onChange((value: string) => { this.ticketText = value })
+        .onChange((value: string) => { this.ticketText = value; this.checkTicket(value) })
+      Row({ space: 8 }) {
+        Button('从剪贴板读取')
+          .layoutWeight(1)
+          .onClick(() => { this.pasteTicket() })
+        Button('清空')
+          .layoutWeight(1)
+          .onClick(() => {
+            this.ticketText = ''
+            this.ticketNote = ''
+            this.ticketWhere = ''
+          })
+      }
+      .width('100%')
+      if (this.ticketWhere.length > 0) {
+        Text(this.ticketWhere).fontSize(12).fontColor('#1F6F5C').width('100%')
+      }
+      if (this.ticketNote.length > 0) {
+        Text(this.ticketNote).fontSize(12).fontColor('#B3261E').width('100%')
+      }
       TextInput({ text: this.endpoint, placeholder: 'host:port' })
         .width('100%')
         .fontSize(11)
@@ -69,6 +92,7 @@ struct Index {
         .onClick(() => { this.runPlatform() })
       Button('保存配对码并打开会话列表')
         .width('80%')
+        .enabled(this.ticketWhere.length > 0)
         .onClick(() => { this.openSessions() })
     }
     .padding(20)
@@ -100,23 +124,57 @@ struct Index {
     })
   }
 
+  /**
+   * 每输入一个字就重新判一次配对码。
+   *
+   * 三件事在这里一起做完：从整段文字里挑出配对码（用户常常整行复制日志）、
+   * 把它读成票子、再用一句人能核对的话写出来。做错的代价很具体——拿昨天的码去连，
+   * 界面只会说「配对码不匹配」，而真正的原因是它早过期了。
+   */
+  private checkTicket(text: string): void {
+    this.ticketNote = ''
+    this.ticketWhere = ''
+    if (text.trim().length === 0) return
+    const read = readTicketText(text)
+    if (read.ticket === null) {
+      this.ticketNote = read.problem
+      return
+    }
+    const now = Date.now()
+    this.ticketWhere = `${describeTicket(read.ticket, now)} · ${remainingLabel(ticketRemainingMs(read.ticket, now))}`
+  }
+
+  /** 从系统剪贴板取一段文字当配对码。鸿蒙侧没有条码扫描接口，粘贴是唯一入口。 */
+  private pasteTicket(): void {
+    try {
+      const board = pasteboard.getSystemPasteboard()
+      board.getData().then((data: pasteboard.PasteData) => {
+        this.ticketText = data.getPrimaryText()
+        this.checkTicket(this.ticketText)
+      }).catch((error: Object) => {
+        this.ticketNote = '读不到剪贴板：' + ('' + error)
+      })
+    } catch (error) {
+      this.ticketNote = '读不到剪贴板：' + ('' + error)
+    }
+  }
+
   private async openSessions(): Promise<void> {
     if (this.ticketText.length === 0) {
       this.summary = '请先粘贴配对码'
       this.detail = ''
       return
     }
-    try {
-      decodeTicket(this.ticketText)
-    } catch (error) {
+    const found = readTicketText(this.ticketText)
+    if (found.ticket === null) {
       this.summary = '配对码读不出来'
-      this.detail = '' + error
+      this.detail = found.problem
       return
     }
     const context = this.getUIContext().getHostContext() as Context
     const store = await HostStore.open(context)
-    await store.saveTicket(decodeTicket(this.ticketText))
-    await router.pushUrl({ url: 'pages/Sessions', params: { ticketText: this.ticketText } })
+    await store.saveTicket(found.ticket)
+    await router.pushUrl({ url: 'pages/Sessions', params: { ticketText: encodeTicket(found.ticket) } })
   }
 
   private runOnce(): void {

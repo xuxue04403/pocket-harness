@@ -35,6 +35,7 @@
 | `src/workspace.ts` | 工作区文件：根目录的 `'.'`、扁平命名参数、搜索四字段全必填、路径规整 |
 | `src/composer.ts` | 发出去的内容块：标准 base64（不是 url 变体）、类型白名单、空 content 必须拦住 |
 | `src/images.ts` | 收回来的图片引用：只认 `attachment`、字节另取、标准 base64 解码 |
+| `src/pairing_text.ts` | 从一整行日志里挑出配对码、判真伪、写成一句可核对的话 |
 
 ## 为什么能信
 
@@ -91,6 +92,9 @@
 16. **`test/images.ts`** —— 收回来的图片：块里只有 `attachment` 没有字节、引用缺
     `attachmentId` 就丢弃、取字节要把会话 id 放进 `request` 里、`+/` 与 `-_` 两套
     字母表不能混用（用错必须报错而不是解出错字节）、无名图片按字节数显示大小。
+17. **`test/pairing_text.ts`** —— 配对码的脏输入：整行日志、带引号、带行尾
+    标点、只复制一半、两个码连着贴。找得到与读得出是两件事：找不到时说「以
+    `pocketharness://pair?t=` 开头」，读不出时说清是复制截断还是码被改过。
 
 `npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做九件事：
 

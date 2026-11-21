@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（822 KB，内含 `ets/modules.abc` 510,808 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（839 KB，内含 `ets/modules.abc` 523,040 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -318,6 +318,31 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 `test/images.ts` 钉形状，`test/live_composer.ts` 里最后几条断言把**真实 Host 发回来
 的那条记录**喂进同一套解析函数，再用它自己的请求体把字节取一遍 —— 这样单测里
 造的形状与真链路必须一致，否则那几条会红。
+
+### 配对码只能粘贴，所以粘贴这件事要做得干净
+
+鸿蒙 SDK **没有条码扫描接口**：`@ohos.scan` 是打印扫描仪（`SystemCapability.Print.PrintFramework`），
+相机里的 `MetadataObjectType.BAR_CODE_DETECTION` 只回调「这里有个条码」的位置与时间戳，
+`MetadataBarcodeObject` 是空接口 —— 拿不到内容。50 个 kit 里也没有 ScanKit / VisionKit。
+要做扫码只能接 HMS Scan Kit（需华为账号）或自己用 Camera + 纯 ArkTS 解码，都留到二期。
+
+于是粘贴成了唯一入口，而粘贴的输入比想象中脏：用户通常整行复制电脑日志
+
+```
+2026-11-22T04:00:00.000+08:00 INFO  pocket-harness pocket-harness: pairing code pocketharness://pair?t=...
+```
+
+`src/pairing_text.ts` 因此负责三件事，`Index.ets` 每输入一个字就重跑一次：
+
+- **在一整段文字里找配对码**。按 base64url 字符集走到第一个非它的字符为止 —— 这比
+  正则去匹配整条 URL 稳，行尾的句号、引号、逗号会被自然截掉而不是被当成载荷。
+- **把「找不到」与「读不出」分开说**。前者是复制错了东西（提示以 `pocketharness://pair?t=`
+  开头），后者细分「只复制到一半」（指标签被截断）与「码被改动过」。
+- **让用户在连之前核对是不是这台电脑**，并显示 `还剩 N 分钟`。配对码 10 分钟轮换，
+  最常踩的坑正是拿昨天的码去连，而界面只会说「配对码不匹配」。
+
+`test/pairing_text.ts` 用真实日志行、带引号、带行尾标点、截断、两个码连着贴这几种输入
+钉住上面每一条。粘贴本身走 `pasteboard.getSystemPasteboard().getData().getPrimaryText()`。
 
 ## 二期路线建议
 
