@@ -107,7 +107,7 @@
 | 握手 | Noise IK（`Noise_IK_25519_ChaChaPoly_SHA256`），Initiator=Client，Responder=Host |
 | Prologue | 绑定 `DSH-REMOTE\0v=1\0connection=<id>\0host=<hostId>\0client=<clientId>`，防止连接被换绑（沿用该前缀以复用已通过的金标向量） |
 | 传输加密 | 握手后所有帧 ChaCha20-Poly1305，counter 单调递增，防重放 |
-| 中继可见性 | 中继只看到 `{room, counter, ciphertext}`，**无明文、无元数据**（房间号是随机量，token 不过线） |
+| 中继可见性 | 中继只看到 `{room, token, counter, ciphertext}`，**无明文、无业务元数据**（房间号是随机量；token 只在配对码里、且 10 分钟轮换） |
 | 局域网 | 明文 TCP 承载密文帧，与 TLS 正交 |
 | 日志 | 永不记录：密钥、token、提示词正文、工作区路径、工具输出正文。只记阶段/耗时/计数 |
 | 权限 | 与 DSH 一致：工具审批只有「允许一次」「拒绝」 |
@@ -128,10 +128,11 @@
 - **中继**（局域网都不通时）：Host 与手机各自**出站**连接 `ws://`/`wss://<relay>/relay`，中继只做配对与双向转发。
   - 首帧必须是**文本** hello：Host 侧 `{v:1, role:'host', room, token}`，手机侧同上但 `role:'client'`。
   - 中继回 `{v:1, ok:true, role, paired}`；两端齐了各推 `{v:1, type:'ready'}`。一方断开给幸存方推 `{v:1, type:'peer-gone'}`。
+  - 回执分两件事：`{v:1, ok:true, ...}` 表示**已进房**（此时可以一直等手机，不算超时）；`{v:1, type:ready}` 才表示**手机也到了**。把两者混为一谈会让一个空房间每 15 秒自我重连一次。
   - 之后 WebSocket 的**每条二进制消息就是一整帧**，不再加长度前缀。
   - 一个房间只容纳一个 host 与一个 client；第二个 client 以 `4409` 关闭；join 超时 10 秒关 `4408`。
   - 中继侧限制：`MAX_FRAME_BYTES = 4 MiB + 64`、`MAX_BUFFERED_BYTES = 8 MiB`、`ROOM_IDLE_MS = 60s`。
-  - token 用 `timingSafeEqual` 比对，**不过线**给对端。
+  - token 用 `timingSafeEqual` 比对；它是**中继启动时配置的那一个**，由 Host 从自身配置读出、写进配对码，因此手机也持有同一份——它只用来进房，解密仍然只靠 Noise。
 
 ### 4.2 帧类型与分片
 
@@ -225,7 +226,7 @@ LinkServer ── Link ── SecureChannel ── RpcServer ── new Peer(ctx
 | L3 真实业务 | 列出会话、读历史、发消息 | 对运行中的 Harness 调用 | ✅ `live_harness_test.dart`；模拟器上真实收发 |
 | L3b 实时任务 | 后台任务名单与输出 | 对运行中的 Harness 调 `job/list`、`job/follow` | ✅ `probe_job_follow_test.dart`；模拟器上看到名单与输出 |
 | L4 UI | 端到端 | Android 模拟器 `phone35` | ✅ 配对→列表→会话→逐字流式→文件→任务→设置 |
-| L5 公网 | 经中继 | 本机跑 `relay/`，Host 与手机都连它 | ✅ `relay_integration_test.dart`、`host/relay.test.js` |
+| L5 公网 | 经中继 | 本机中继 + `relayToken` 配进 profile，手机**只带中继坐标**连接 | ✅ `plugin_relay_integration_test.dart`（真实插件）、`tool/live_relay_test.dart`（真实 DSH `session/list`，854 会话）、模拟器显示「经中继」 |
 
 **回归命令**：
 
@@ -233,7 +234,7 @@ LinkServer ── Link ── SecureChannel ── RpcServer ── new Peer(ctx
 # Dart 协议层（38 例）
 cd packages\dsh_link; dart analyze; dart test
 
-# Host 插件与中继（11 例）
+# Host 插件与中继（13 例）
 node --test host
 
 # Flutter 客户端（11 例）
@@ -287,7 +288,7 @@ D:\IDE\dsh-bot\
 3. 日志禁记 token、密钥、提示词正文、工作区路径、工具输出正文。
 4. 明文 TCP 只用于承载密文帧；公网必须走 `wss://`。
 5. 工具审批只有「允许一次」「拒绝」——透传 DSH 自身的审批语义，不新增提权路径。
-6. 中继不可见任何业务明文，token 不过线。
+6. 中继不可见任何业务明文；token 只出现在配对码里（10 分钟轮换），不出现在任何 RPC 或日志中。
 
 ## 9. 二期：移动端本机运行 dsh（设计预留）
 

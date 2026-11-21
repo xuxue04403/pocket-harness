@@ -70,12 +70,14 @@ export class RelayDialer {
     }
     socket.binaryType = 'arraybuffer'
     this.#socket = socket
-    let admitted = false
+    let joined = false
     const relay = new RelaySocket(socket)
     this.#relay = relay
 
+    // Waiting for a phone is the normal state, not a timeout: the room can stay
+    // empty for hours. Only the *join* has a deadline.
     const timer = setTimeout(() => {
-      if (!admitted) {
+      if (!joined) {
         this.#logger?.warn?.('pocket-harness: the relay did not answer in time')
         try {
           socket.close(1000, 'timeout')
@@ -90,8 +92,12 @@ export class RelayDialer {
       socket.send(JSON.stringify({ v: 1, role: 'host', room: this.#room, token: this.#token }))
       this.#logger?.info?.('pocket-harness: joined the relay room')
     })
+    relay.on('joined', () => {
+      joined = true
+      clearTimeout(timer)
+    })
     relay.on('ready', () => {
-      admitted = true
+      joined = true
       clearTimeout(timer)
       this.#served += 1
       this.#logger?.info?.('pocket-harness: relay paired with a phone')

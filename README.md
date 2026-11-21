@@ -25,7 +25,7 @@
 |---|---|
 | 配对（扫码 / 粘贴配对码） | ✅ 一次性携带公钥与端点，天然 TOFU |
 | 局域网直连 | ✅ TCP + Noise IK |
-| 公网中继（自建） | ✅ 双方出站，中继只见密文 |
+| 公网中继（自建） | ✅ 双方出站，中继只见密文；配 `relayUrl` + `relayToken` 即启用 |
 | 会话列表、历史、新建会话 | ✅ 新建时可挑智能体预设与工作目录；长按可改名 |
 | 链路保活（心跳） | ✅ 静默断线 10 秒内报错，不会一直转圈 |
 | 查找会话（标题、目录、正文） | ✅ 830 个会话也能定位；正文检索随 Host 配置，关掉时仅按标题目录 |
@@ -91,12 +91,12 @@ $env:POCKET_HARNESS_RELAY_TOKEN = "<至少 16 字符的随机串>"
 node run.mjs          # 监听 8080，/healthz 可探活
 ```
 
-然后在 Host 插件的配置里设置 `relayUrl`（例如 `wss://relay.example.com/relay`）并重启 Harness。之后手机在局域网内会直连，出了局域网就自动走中继。中继只转发密文，也看不到你的 token。
+然后在 Host 插件的配置里设置 `relayUrl`（例如 `wss://relay.example.com/relay`）与 `relayToken`（就是上面那个 `POCKET_HARNESS_RELAY_TOKEN` 的值）并重启 Harness。之后手机在局域网内会直连，出了局域网就自动走中继。中继只转发密文，解不开任何一帧。
 
 ## 开发
 
 ```powershell
-# Dart 协议层：43 个测试
+# Dart 协议层：46 个测试
 cd packages\dsh_link; dart analyze; dart test
 
 # Host 插件与中继：12 个测试

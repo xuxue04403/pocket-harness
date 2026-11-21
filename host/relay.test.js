@@ -74,6 +74,33 @@ test('the Host dialer hands a paired phone to the link server', async () => {
   }
 })
 
+// A Host legitimately waits for a phone in an empty room. The dialer used to
+// treat "no phone yet" as a failed handshake and drop the room every 15 seconds,
+// which showed up as a Host flapping between joined and closed in the log.
+test('an empty room is kept open instead of timing out', async () => {
+  const { relay, url } = await startRelay()
+  const handed = []
+  const dialer = new RelayDialer({
+    url,
+    room: 'test-room-0003',
+    token: TOKEN,
+    onTransport: transport => handed.push(transport),
+  })
+  dialer.start()
+  try {
+    await until(() => dialer.connected, 'the Host never joined the room')
+    // Longer than HANDSHAKE_TIMEOUT_MS (15s) is impractical in a unit test, so
+    // this asserts the state the timeout keys off: joined, no phone, no drop.
+    await until(() => relay.rooms.has('test-room-0003'), 'the room disappeared')
+    await new Promise(resolve => setTimeout(resolve, 300))
+    assert.equal(dialer.connected, true, 'an empty room must not close the dial')
+    assert.equal(handed.length, 0)
+  } finally {
+    await dialer.close()
+    await relay.close()
+  }
+})
+
 test('a phone that leaves does not block the next one', async () => {
   const { relay, url } = await startRelay()
   const handed = []

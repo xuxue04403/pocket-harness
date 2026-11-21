@@ -70,6 +70,10 @@ export class RelaySocket extends EventEmitter {
         this.#fail(new Error('the phone left the relay'))
         return
       }
+      // The relay answers the hello with an ack, then — only once a phone is in
+      // the room too — a separate "ready". A Host can legitimately sit in an
+      // empty room for hours, so joining and pairing must be distinguishable.
+      if (data.includes('"ok":true')) this.emit('joined')
       if (data.includes('"ready"')) this.emit('ready')
       return
     }

@@ -50,6 +50,7 @@ export function apply(ctx, config = {}) {
   const state = new HostState(ctx, {
     hostName: config.hostName ?? 'Pocket Harness Host',
     relayUrl: config.relayUrl ?? null,
+    relayToken: config.relayToken ?? null,
   })
   let server = null
   let starting = null
@@ -129,18 +130,25 @@ export function apply(ctx, config = {}) {
  *
  * A relay is what lets a phone reach this Host across the internet without a
  * public address: the Host dials out, so no port is opened and no router is
- * touched. The room name and token are kept with the Host identity because they
- * are what the pairing code hands to the phone, and they must survive restarts
- * so a code already on screen keeps working.
+ * touched. The room name is kept with the Host identity because the pairing code
+ * hands it to the phone, and it must survive restarts so a code already on
+ * screen keeps working. The token is the operator's, not ours.
  *
  * The relay only ever sees Noise ciphertext; the token stops a stranger who
  * guessed a room name from taking the slot.
+ *
+ * A relay address without a token is a configuration mistake that would make
+ * every dial fail, so it is reported once and the LAN listener keeps working.
  */
 async function startRelay(ctx, config, state, server) {
   const url = config.relayUrl
   if (typeof url !== 'string' || url.length === 0) return null
+  if (!state.advertisesRelay) {
+    ctx.logger?.warn?.('pocket-harness: relayUrl is set but relayToken is missing; the LAN listener still works')
+    return null
+  }
   const room = await state.relayRoom()
-  const token = await state.relayToken()
+  const token = state.relayToken()
   const dialer = new RelayDialer({
     url,
     room,
@@ -221,12 +229,14 @@ class HostState {
   #ctx
   #hostName
   #relayUrl
+  #relayToken
   #loaded = null
 
-  constructor(ctx, { hostName, relayUrl = null } = {}) {
+  constructor(ctx, { hostName, relayUrl = null, relayToken = null } = {}) {
     this.#ctx = ctx
     this.#hostName = hostName
     this.#relayUrl = typeof relayUrl === 'string' && relayUrl.length > 0 ? relayUrl : null
+    this.#relayToken = typeof relayToken === 'string' && relayToken.length > 0 ? relayToken : null
   }
 
   get #key() {
@@ -281,19 +291,30 @@ class HostState {
   async relayRoom() {
     const record = await this.#record()
     if (typeof record.relay?.room === 'string' && record.relay.room.length > 0) return record.relay.room
-    const relay = { room: randomBytes(16).toString('hex'), token: randomBytes(24).toString('base64url') }
-    record.relay = relay
+    record.relay = { ...record.relay, room: randomBytes(16).toString('hex') }
     await this.#save(record)
-    return relay.room
+    return record.relay.room
   }
 
-  /** The shared secret a relay requires before it forwards anything. */
-  async relayToken() {
-    const record = await this.#record()
-    if (typeof record.relay?.token === 'string' && record.relay.token.length > 0) return record.relay.token
-    await this.relayRoom()
-    const latest = await this.#record()
-    return latest.relay.token
+  /**
+   * The shared secret a relay requires before it forwards anything.
+   *
+   * This is the operator's token, not something this Host invents: the relay
+   * compares it against the value it was started with, so a locally generated
+   * secret could never match and every dial would be refused. A Host with a
+   * relay address but no token is misconfigured, and says so instead of
+   * generating a secret that cannot work.
+   */
+  relayToken() {
+    if (this.#relayToken === null) {
+      throw new Error('a relay address needs the matching relayToken in this profile')
+    }
+    return this.#relayToken
+  }
+
+  /** Whether a pairing code can offer a relay at all. */
+  get advertisesRelay() {
+    return this.#relayUrl !== null && this.#relayToken !== null
   }
 
   /**
@@ -315,10 +336,11 @@ class HostState {
     }
     // A relay is only advertised when one is configured, so a code never sends a
     // phone hunting for a service that is not there.
-    const relay = this.#relayUrl === null ? {} : { relayUrl: this.#relayUrl }
-    if (this.#relayUrl !== null) {
+    const relay = {}
+    if (this.advertisesRelay) {
+      relay.relayUrl = this.#relayUrl
       relay.relayRoom = await this.relayRoom()
-      relay.relayToken = await this.relayToken()
+      relay.relayToken = this.relayToken()
     }
     return createTicket({
       hostDeviceId: identity.deviceId,

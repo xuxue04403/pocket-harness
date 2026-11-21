@@ -47,6 +47,7 @@ Thumbs.db
 
 # 配对票据含 secret，绝不入库
 probe/_live-ticket*.txt
+probe/_relay-ticket*.txt
 
 # 探针日志会captured配对码，不入库
 probe/_*.out
