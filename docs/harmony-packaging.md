@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（546 KB，内含 `ets/modules.abc` 308,308 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（579 KB，内含 `ets/modules.abc` 333,204 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -201,6 +201,22 @@ tar.exe -tf entry\build\default\outputs\default\entry-default-unsigned.hap
 
 `test/live_models.ts` 用真实 Host 校验清单与路由能对上，但**故意不真的换模型** ——
 那会改掉这台电脑上真实会话的状态。
+
+### 新建会话：预设与工作目录
+
+会话列表右上角的「新建会话」展开一条面板，第一行永远是「跟随电脑的默认预设（<名字>）」，
+下面才是这台电脑上的各个预设，再下面是工作目录输入框。数据侧在
+`src/agent_presets.ts`，被 `test/agent_presets.ts` 钉住：
+
+- **「跟随电脑」与「显式选了默认预设」不是一回事**。不传 `agentPreset` 表示会话
+  跟随电脑的默认设置（以后改默认，新会话跟着变）；传了默认预设的 id 就把会话钉死
+  在那个预设上。所以面板不会预先选中默认预设。
+- **空的 `cwd` 绝不能变成 `cwd: ''` 发出去**，那是「当前进程目录」而不是「用默认」，
+  请求体构造器只在非空时才写这个键。
+- 预设读不到不影响列会话：面板退化成只有「跟随电脑」一行，仍能建会话。
+
+`test/live_presets.ts` 用真实 Host 校验预设清单（本机是 `standard, ptc, minimal,
+cordis, lean`），同样**不真的新建会话**——那会在电脑上留下记录。
 
 ## 二期路线建议
 
