@@ -4,7 +4,7 @@
 // projections 可能缺失、800 多个会话没有分页。每一条都写进断言，因为界面上
 // 出错时最难判断的就是「是数据形状变了还是界面写错了」。
 
-import { readSessionRow, readSessionRows, sortSessionRows, UNTITLED_SESSION, type SessionRow } from '../src/session_rows'
+import { filterSessionRows, readSessionRow, readSessionRows, sortSessionRows, UNTITLED_SESSION, type SessionRow } from '../src/session_rows'
 import type { JsonObject } from '../src/json'
 
 const failures: string[] = []
@@ -97,10 +97,32 @@ function checkSort(): void {
   same('the input order is not mutated', rows.map((row: SessionRow): string => row.sessionId), ['old', 'idle-new', 'live-old'])
 }
 
+function checkFilter(): void {
+  const rows: SessionRow[] = [
+    { sessionId: 's1', title: 'Pocket Harness 设计', detail: 'D:\\IDE\\dsh-bot', running: false, updatedAt: 1 },
+    { sessionId: 's2', title: '码率优化', detail: 'D:\\IDE\\UU', running: false, updatedAt: 2 },
+    { sessionId: 's3', title: '未命名会话', detail: 'C:\\Users\\xuexu\\.dsh\\profiles\\desktop', running: false, updatedAt: 3 },
+  ]
+
+  same('an empty query keeps every row', filterSessionRows(rows, '').map((r: SessionRow): string => r.sessionId), ['s1', 's2', 's3'])
+  same('whitespace is an empty query', filterSessionRows(rows, '   ').map((r: SessionRow): string => r.sessionId), ['s1', 's2', 's3'])
+  same('the title matches case-insensitively', filterSessionRows(rows, 'pocket').map((r: SessionRow): string => r.sessionId), ['s1'])
+  same('the directory matches', filterSessionRows(rows, 'uu').map((r: SessionRow): string => r.sessionId), ['s2'])
+  same('the directory matches with backslashes and case', filterSessionRows(rows, 'IDE\\UU'.toLowerCase()).map((r: SessionRow): string => r.sessionId), ['s2'])
+  same('no match is an empty list', filterSessionRows(rows, 'nothing-like-this'), [])
+  same('the session id is not searched', filterSessionRows(rows, 's2'), [])
+  // 返回副本：界面把结果直接赋给 @State，若与入参同一个数组，ArkUI 判不出变化。
+  ok('the result is a copy', filterSessionRows(rows, '') !== rows)
+
+  // 空查询返回「全部」而技能过滤返回「空」——这条差异是刻意的，写在这里防止被"统一"。
+  same('an empty query keeps everything, unlike the skill filter', filterSessionRows(rows, '').length, 3)
+}
+
 function main(): void {
   console.log('session rows')
   checkRows()
   checkSort()
+  checkFilter()
   if (failures.length > 0) {
     console.log(`\n${failures.length} SESSION ROW CHECK(S) FAILED`)
     process.exit(1)

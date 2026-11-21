@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（839 KB，内含 `ets/modules.abc` 523,040 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（846 KB，内含 `ets/modules.abc` 528,656 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -343,6 +343,17 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 
 `test/pairing_text.ts` 用真实日志行、带引号、带行尾标点、截断、两个码连着贴这几种输入
 钉住上面每一条。粘贴本身走 `pasteboard.getSystemPasteboard().getData().getPrimaryText()`。
+
+### 会话列表要能筛
+
+`session/list` 这个部署一次返回 800 多个会话，**没有分页**，所以 ArkTS 侧和 Flutter 侧
+都只能在前端筛。`filterSessionRows` 只比 `title` 与 `detail`（目录或相对时间），不比
+`sessionId` —— 那是一串机器生成的 id，没人会想起来搜它。
+
+与 `filterSkills` 相反的一条：**空查询返回全部**，而技能筛选的空查询返回空。两个列表
+的默认状态不同 —— 技能面板是「点了才出现」的挑选器，空输入时没什么可选；会话列表是
+一打开就在那儿的全部内容，空输入时必须还是全部，否则一进页面就空白。这条差异在
+`test/session_rows.ts` 里专门有一条断言守着，防止以后被"统一"掉。
 
 ## 二期路线建议
 

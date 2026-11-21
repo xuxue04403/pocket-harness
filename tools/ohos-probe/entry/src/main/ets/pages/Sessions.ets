@@ -16,7 +16,7 @@ import { decodeTicket, type PairingTicket } from '../core/pairing'
 import { HostStore } from '../storage.ohos'
 import { openRelayTransport, openTcpTransport, systemRandom } from '../platform.ohos'
 import { LinkClient, LinkRefusedError } from '../core/client'
-import { readSessionRows, sortSessionRows, type SessionRow } from '../core/session_rows'
+import { readSessionRows, sortSessionRows, filterSessionRows, type SessionRow } from '../core/session_rows'
 import {
   createSessionRequest,
   FOLLOW_DESKTOP_PRESET,
@@ -59,6 +59,7 @@ struct Sessions {
   @State pickedPreset: string = ''
   @State cwdText: string = ''
   @State createError: string = ''
+  @State query: string = ''
   private link: LinkClient | null = null
   private ticketText: string = ''
 
@@ -249,6 +250,25 @@ struct Sessions {
         this.newSessionPanel()
       }
 
+      // 800 多个会话滚起来很难找。搜索框放在面板下面、列表上面：它属于列表，
+      // 不属于新建会话。
+      if (!this.loading && this.error.length === 0 && this.rows.length > 0) {
+        Row({ space: 8 }) {
+          TextInput({ text: this.query, placeholder: '按标题或目录筛选' })
+            .layoutWeight(1)
+            .fontSize(13)
+            .onChange((value: string) => { this.query = value })
+          if (this.query.length > 0) {
+            Text('清空')
+              .fontSize(13)
+              .fontColor('#1F6F5C')
+              .onClick(() => { this.query = '' })
+          }
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 8 })
+      }
+
       if (this.loading) {
         Row({ space: 8 }) {
           LoadingProgress().width(20).height(20)
@@ -264,9 +284,14 @@ struct Sessions {
         .width('100%')
       } else if (this.rows.length === 0) {
         Text('这台电脑上还没有会话。').fontSize(13).fontColor('#666666').padding(16)
+      } else if (filterSessionRows(this.rows, this.query).length === 0) {
+        Text(`没有标题或目录里带「${this.query.trim()}」的会话。`)
+          .fontSize(13)
+          .fontColor('#666666')
+          .padding(16)
       } else {
         List({ space: 0 }) {
-          ForEach(this.rows, (row: SessionRow) => {
+          ForEach(filterSessionRows(this.rows, this.query), (row: SessionRow) => {
             ListItem() {
               Column({ space: 4 }) {
                 Row({ space: 6 }) {

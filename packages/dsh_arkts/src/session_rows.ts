@@ -78,3 +78,20 @@ function relativeLabel(updatedAt: number): string {
   return `${Math.floor(delta / 86_400_000)} 天前`
 }
 
+/**
+ * 按标题或目录筛会话。
+ *
+ * 与 `filterSkills` 的空查询规则相反：这里**空查询返回全部**。理由是两个列表的默认
+ * 状态不同 —— 技能面板是「点了才出现」的挑选器，空输入时没有什么可选；会话列表是
+ * 一打开就在那儿的全部内容，空输入时必须还是全部，否则一进页面就空白。
+ *
+ * 匹配的是 `title` 与 `detail`（目录或相对时间）。不匹配 `sessionId`：那是一串机器
+ * 生成的 id，没人会想起来去搜它。
+ */
+export function filterSessionRows(rows: SessionRow[], query: string): SessionRow[] {
+  const needle = query.trim().toLowerCase()
+  if (needle.length === 0) return rows.slice()
+  return rows.filter((row: SessionRow): boolean =>
+    row.title.toLowerCase().includes(needle) || row.detail.toLowerCase().includes(needle))
+}
+

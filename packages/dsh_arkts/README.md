@@ -39,7 +39,7 @@
 
 ## 为什么能信
 
-`npm test` 跑十六套断言：
+`npm test` 跑十七套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
