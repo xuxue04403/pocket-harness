@@ -39,6 +39,7 @@
 | 浏览工作区文件 | ✅ 按目录翻、按名字搜、按行读文本，只读 |
 | 后台任务 | ✅ 看会话跑的每条命令、跟随实时输出、可远程终止 |
 | 待办面板 | ✅ 贴在对话上方，显示完成进度与当前项，可折叠 |
+| 会话分支 | ✅ 从当前会话分出一个副本，两边并行不互相影响 |
 | Android | ✅ 模拟器与构建均通过 |
 | HarmonyOS 7.0 | 🟡 ArkTS 宿主已在 Windows 上真编译出 HAP；Dart AOT 需 macOS arm64，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
 | WebRTC P2P / TURN | ⏳ 二期（局域网直连 + 中继已覆盖当前场景） |

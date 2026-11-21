@@ -25,10 +25,15 @@ class PocketHarnessApp extends StatefulWidget {
 class _PocketHarnessAppState extends State<PocketHarnessApp> {
   late final Future<HostStore> _store = _bootstrap();
 
-  /// Opens storage and, when a code was supplied at launch, records it once.
+  /// Opens storage and, when a code was supplied at launch, records it.
+  ///
+  /// The record is refreshed on every launch rather than only on the first one:
+  /// the pairing secret inside a ticket is rotated by the Host every ten
+  /// minutes, so a seeded ticket that is stored once goes stale while the saved
+  /// Host entry lives on and keeps failing with `bad-proof`.
   Future<HostStore> _bootstrap() async {
     final store = await HostStore.open();
-    if (_seededTicket.isEmpty || store.hosts().isNotEmpty) return store;
+    if (_seededTicket.isEmpty) return store;
     try {
       await store.saveHost(PairingTicket.decode(_seededTicket));
     } on FormatException {

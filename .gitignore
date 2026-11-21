@@ -59,3 +59,4 @@ probe/_*.out
 probe/_*.err
 probe/_ui*.xml
 probe/_msg.txt
+probe/_apkcheck/

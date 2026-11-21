@@ -155,6 +155,33 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  /// Copies this conversation into a new one and opens it.
+  ///
+  /// The Host cuts at the latest completed turn, so the copy carries the same
+  /// history, working directory and preset. That is the shape a person wants on
+  /// a phone: try a different direction without losing the run that led here.
+  Future<void> _fork() async {
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final forked = await widget.link.fork(widget.sessionId);
+      if (!mounted) return;
+      // Push rather than replace: the source stays one step back, because the
+      // usual reason to branch is to compare the two.
+      await navigator.push(
+        MaterialPageRoute(
+          builder: (_) => ChatPage(
+            link: widget.link,
+            sessionId: forked,
+            title: widget.title,
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('分支失败：${_describe(error)}')));
+    }
+  }
+
   Future<void> _pickModel() async {
     final selected = await showModelPicker(
       context,
@@ -460,6 +487,24 @@ class _ChatPageState extends State<ChatPage> {
             onPressed: _pickModel,
             icon: const Icon(Icons.tune),
             tooltip: '选择模型',
+          ),
+          // The actions that change the conversation rather than read it live
+          // here; one menu keeps the bar from becoming a row of identical icons.
+          PopupMenuButton<String>(
+            tooltip: '更多',
+            onSelected: (value) {
+              if (value == 'fork') unawaited(_fork());
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'fork',
+                child: ListTile(
+                  leading: Icon(Icons.call_split),
+                  title: Text('分支出一个副本'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
           // Only while a turn is actually running: an always-visible stop button
           // on an idle conversation is a button that does nothing.

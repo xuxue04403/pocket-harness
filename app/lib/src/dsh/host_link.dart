@@ -1181,6 +1181,24 @@ class HostLink {
     return ModelCatalog.fromJson(value);
   }
 
+  /// Copies a session up to [atSeq] into a new one, returning its id.
+  ///
+  /// Omitting [atSeq] asks the Host for the latest completed turn, which is the
+  /// case a phone wants: try a different direction without losing the transcript
+  /// that led here. The source session is untouched, and the copy carries the
+  /// same working directory and agent preset because the Host rebuilds it from
+  /// the records it copied.
+  Future<String> fork(String sessionId, {int? atSeq}) async {
+    final value = await _client.rpc.call('session/fork', {
+      'request': {'sessionId': sessionId, 'atSeq': ?atSeq},
+    });
+    final forked = value['sessionId'];
+    if (forked is! String || forked.isEmpty) {
+      throw StateError('the Host did not return the forked session');
+    }
+    return forked;
+  }
+
   /// The model route one session is currently on, or null when the Host has not
   /// projected one yet (a brand-new session before its first turn).
   Future<ModelSelection?> selection(String sessionId) async {
