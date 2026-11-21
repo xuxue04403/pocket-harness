@@ -21,6 +21,7 @@ await build({ ...shared, entryPoints: ['test/composer.ts'], outfile: 'build/comp
 await build({ ...shared, entryPoints: ['test/images.ts'], outfile: 'build/images.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/pairing_text.ts'], outfile: 'build/pairing_text.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/jobs.ts'], outfile: 'build/jobs.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/todos.ts'], outfile: 'build/todos.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live.ts'], outfile: 'build/live.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_transcript.ts'], outfile: 'build/live_transcript.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_relay.ts'], outfile: 'build/live_relay.mjs', platform: 'node', target: 'es2022' })
@@ -31,3 +32,4 @@ await build({ ...shared, entryPoints: ['test/live_settings.ts'], outfile: 'build
 await build({ ...shared, entryPoints: ['test/live_workspace.ts'], outfile: 'build/live_workspace.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_composer.ts'], outfile: 'build/live_composer.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_jobs.ts'], outfile: 'build/live_jobs.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/live_todos.ts'], outfile: 'build/live_todos.mjs', platform: 'node', target: 'es2022' })

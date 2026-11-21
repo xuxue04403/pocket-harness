@@ -37,10 +37,11 @@
 | `src/images.ts` | 收回来的图片引用：只认 `attachment`、字节另取、标准 base64 解码 |
 | `src/pairing_text.ts` | 从一整行日志里挑出配对码、判真伪、写成一句可核对的话 |
 | `src/jobs.ts` | 后台任务：`job/list` 是不结束的整集流、`follow` 三段式、`kill` 对已结束任务不报错 |
+| `src/todos.ts` | agent 的计划：`todos` 的 `null` 与空数组是两件事，`todo/write` 整表替换 |
 
 ## 为什么能信
 
-`npm test` 跑十八套断言：
+`npm test` 跑十九套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -101,8 +102,12 @@
     `lossy` 表示中间丢过输出、**`job/kill` 对已结束的任务回 `already-finished` 而不是报错**
     （所以界面要说「已经结束了」，不能假装终止成功）、认不出的状态原样显示而不是写「未知」、
     `startedAt` 缺失时不显示「0 秒」。
+19. **`test/todos.ts`** —— agent 的计划：`todos` 缺键、`null`、空数组是**三件不同的事**
+    （前两者是「还没列计划」，整块隐藏；空数组是「计划被清空」，显示成空表）；
+    `todo/write` 整表替换而不是合并；认不出的状态原样保留；进度的分母是全部条目；
+    折叠摘要优先正在做的那条，全做完时说「全部完成」。
 
-`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做十件事：
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做十一件事：
 
 1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
    数学正确，而是「这份代码能跟真正的 Host 说话」。
@@ -137,6 +142,9 @@
 10. 扫最多 40 个会话找有任务的，取 `job/list` 的**第一帧**，再对一个**已经结束**的任务
     试 `job/kill`，确认回的是 `already-finished`。这里故意不杀活任务：那个「运行中」
     的任务很可能就是当前会话自己的工具调用，杀掉它等于把自己掐断。
+11. 扫最多 200 个会话的 `session/projections`，直到见过带计划的会话（实测这台机器
+    869 个会话里 54 个有计划，所以扫 40 个经常一条也遇不到）：既验证「还没列计划」
+    这种形状真的会走到，也验证真遇到计划时每条都有内容与状态、进度是分数、摘要有字。
 
 ## 在鸿蒙工程里怎么用
 

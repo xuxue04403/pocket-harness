@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（916 KB，内含 `ets/modules.abc` 579,492 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（939 KB，内含 `ets/modules.abc` 595,728 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -372,6 +372,23 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 
 **不要在同一个会话里验证「杀活任务」**：那个「运行中」的任务很可能就是当前会话自己的工具
 调用，杀它等于把自己掐断。我只对已经结束的任务验证过终止路径。
+
+### agent 的计划：`null` 与空数组是两件事
+
+`session/projections` 的 `values.todos` 有三种形态：**缺键**、**`null`**、**数组**。前两者是
+「agent 还没列过计划」，整块面板应当隐藏；空数组是「计划被清空了」，该显示成空表而不是
+消失。把 `null` 和 `[]` 混成一个（比如都当成空列表）会让界面在会话刚开始时闪一下空面板。
+
+`todo/write` 事件**整表替换**，条目没有 id —— 最新一帧就是真相，合并反而是错的。状态目前
+是 `pending` / `in_progress` / `completed` 三种，但**认不出的状态要原样保留**，否则新版 Host
+加一个状态会让整个面板消失。
+
+面板默认收起，只留一行「进度 + 正在做的那条」：对话页的面积属于对话本身。从「没有计划」
+变成「有计划」时自动展开一次（这一刻用户最想知道 agent 打算做什么），之后用户收起就保持收起。
+
+扫真实数据有个陷阱：这台机器 869 个会话里只有 54 个带计划，扫前 40 个经常一条也遇不到，
+早先的 `live_todos` 因此写成 `sawNull > 0 || sawList > 0`，在「一条都没找到」的情况下仍然
+通过。现在改成两条独立断言（两种形状都必须真的见到），并把扫描上限提到 200。
 
 ## 二期路线建议
 

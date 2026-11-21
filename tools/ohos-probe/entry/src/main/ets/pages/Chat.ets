@@ -66,6 +66,16 @@ import {
   PROMPT_MODE_STEER,
   type OutgoingImage,
 } from '../core/composer'
+import {
+  isTodoDone,
+  isTodoRunning,
+  readTodos,
+  readTodoWrite,
+  shouldShowTodos,
+  todoProgress,
+  todoSummary,
+  type TodoItem,
+} from '../core/todos'
 import { pickOneImage, thumbnailOfBase64 } from '../images.ohos'
 import {
   attachmentData,
@@ -142,6 +152,12 @@ struct Chat {
   /** 已选好、还没发出去的图片。 */
   @State pendingImages: OutgoingImage[] = []
   @State picking: boolean = false
+  /**
+   * agent 的计划。`null` 是「还没列计划」（整块隐藏），空数组是「计划被清空」。
+   * 每次 `todo/write` 都整表替换，所以这里直接覆盖，不做合并。
+   */
+  @State todos: TodoItem[] | null = null
+  @State todoPanel: boolean = false
   private link: LinkClient | null = null
   private stream: FollowStream | null = null
   private followCancel: StreamCancel | null = null
@@ -242,6 +258,10 @@ struct Chat {
     link.rpc.call('session/projections', { request: { sessionId: this.sessionId } }, 15000).then((answer: JsonObject) => {
       this.selection = readProjectionSelection(answer)
       this.modelLabel = routeLabel(this.catalog, this.selection)
+      const values = answer['values']
+      if (values !== null && typeof values === 'object' && !Array.isArray(values)) {
+        this.setTodos(readTodos(values as JsonObject))
+      }
     }).catch(() => {
       this.selection = null
     })
@@ -259,6 +279,22 @@ struct Chat {
     }).catch(() => {
       this.skills = []
     })
+  }
+
+  /**
+   * 换掉整块计划，并决定面板是否要展开。
+   *
+   * 从「没有计划」变成「有计划」时自动展开一次 —— 这时 agent 刚开始干活，用户最
+   * 想知道它打算做什么。之后用户自己收起就保持收起，不要每次 `todo/write` 都弹开。
+   */
+  private setTodos(next: TodoItem[] | null): void {
+    const had = this.todos
+    this.todos = next
+    if (!shouldShowTodos(next)) {
+      this.todoPanel = false
+      return
+    }
+    if (had === null || had.length === 0) this.todoPanel = true
   }
 
   /**
@@ -442,6 +478,12 @@ struct Chat {
       this.merge(row)
       const event = frame['event'] as JsonObject
       const name = stringField(event, 'type', '')
+      if (name === 'todo/write') {
+        const data = event['data']
+        if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+          this.setTodos(readTodoWrite(data as JsonObject))
+        }
+      }
       if (name === 'turn/start') this.running = true
       if (name === 'assistant/message' || name === 'turn/end') {
         this.draft = null
@@ -885,6 +927,66 @@ struct Chat {
     .padding({ left: 16, right: 16, bottom: 4 })
   }
 
+  /**
+   * 计划面板。
+   *
+   * 收起时只留一行：进度 + 正在做的那条。展开时逐条列。理由是对话页的主要面积
+   * 属于对话本身 —— 计划是「为什么它在做这些事」的索引，不是主体。
+   */
+  @Builder
+  private todoPanelView() {
+    Column({ space: 0 }) {
+      Row({ space: 8 }) {
+        Text(this.todoPanel ? '收起计划' : '计划')
+          .fontSize(12)
+          .fontColor('#0A7A4F')
+          .fontWeight(FontWeight.Medium)
+        if (this.todos !== null) {
+          Text(todoProgress(this.todos))
+            .fontSize(11)
+            .fontColor('#666666')
+        }
+        if (this.todos !== null) {
+          Text(todoSummary(this.todos))
+            .fontSize(12)
+            .fontColor('#1A1A1A')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+        } else {
+          Blank().layoutWeight(1)
+        }
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .onClick(() => { this.todoPanel = !this.todoPanel })
+
+      if (this.todoPanel && this.todos !== null) {
+        ForEach(this.todos, (item: TodoItem, index: number) => {
+          Row({ space: 8 }) {
+            Text(isTodoDone(item) ? '✓' : (isTodoRunning(item) ? '▶' : '○'))
+              .fontSize(12)
+              .fontColor(isTodoDone(item) ? '#0A7A4F' : (isTodoRunning(item) ? '#B26A00' : '#999999'))
+              .width(14)
+            Text(item.content)
+              .fontSize(12)
+              .fontColor(isTodoDone(item) ? '#888888' : '#1A1A1A')
+              .decoration({ type: isTodoDone(item) ? TextDecorationType.LineThrough : TextDecorationType.None, color: '#888888' })
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 3, bottom: 3 })
+        }, (item: TodoItem, index: number) => `${index}-${item.content}`)
+      }
+    }
+    .width('100%')
+    .backgroundColor('#F4F7F5')
+    .borderRadius(8)
+    .margin({ left: 12, right: 12, top: 4, bottom: 4 })
+  }
+
   build() {
     Column() {
       Row() {
@@ -962,6 +1064,10 @@ struct Chat {
 
       if (this.skillPanel) {
         this.skillPanelView()
+      }
+
+      if (shouldShowTodos(this.todos)) {
+        this.todoPanelView()
       }
 
       List({ space: 0 }) {
