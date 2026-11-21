@@ -1,0 +1,16 @@
+{
+  "name": "dsh-arkts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pocket Harness 协议核心的 TypeScript 版本：同一份源码供鸿蒙 ArkTS 与 Node 金标测试使用。",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node build/vectors.mjs && node build/protocol.mjs",
+    "test:live": "node build.mjs && node build/live.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "license": "MIT"
+}

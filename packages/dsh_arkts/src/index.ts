@@ -1,0 +1,16 @@
+// 协议核心的公开面。
+//
+// 鸿蒙侧直接 import 这些名字；Node 侧通过 esbuild 打成单文件后跑金标向量。
+// 两层共用同一份源码，所以「金标通过」对鸿蒙同样成立。
+
+export * from './bytes'
+export * from './sha256'
+export * from './curve25519'
+export * from './chacha20_poly1305'
+export * from './noise'
+export * from './wire'
+export * from './pairing'
+export * from './secure_channel'
+export * from './rpc'
+export * from './identity'
+export * from './link_protocol'

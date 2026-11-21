@@ -60,3 +60,9 @@ probe/_*.err
 probe/_ui*.xml
 probe/_msg.txt
 probe/_apkcheck/
+
+# TypeScript protocol core build output
+packages/dsh_arkts/node_modules/
+packages/dsh_arkts/build/
+probe/_fixture.json
+probe/_tscheck/

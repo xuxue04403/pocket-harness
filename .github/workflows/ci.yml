@@ -47,6 +47,21 @@ jobs:
       - name: Test
         run: node --test host
 
+  arkts:
+    name: TypeScript protocol core (HarmonyOS source)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install build dependency
+        working-directory: packages/dsh_arkts
+        run: npm install --no-audit --no-fund
+      - name: Golden vectors and protocol checks
+        working-directory: packages/dsh_arkts
+        run: npm test
+
   client:
     name: Flutter client
     runs-on: ubuntu-latest
