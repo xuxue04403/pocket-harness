@@ -44,11 +44,29 @@ async function authorize({ connectionId, clientDeviceId, proof }) {
   }
 }
 
-/** Echo gateway: proves args and results survive both directions intact. */
+/** Every outcome the phone sent back for a forwarded question. */
+const outcomes = []
+
+/** A question the phone is expected to answer, standing in for an approval. */
+const question = {
+  type: 'waterfall',
+  event: 'approval/request',
+  eventId: 'evt-1',
+  agentId: 'agent-under-test',
+  request: { toolName: 'shell', reason: 'run a command' },
+}
+
+/**
+ * Echo gateway: proves args and results survive both directions intact.
+ *
+ * The `dispatch`/`open` pair covers the Gateway's own `$events` endpoints, which
+ * is how a phone answers approvals. `test/outcome` reads back what it answered.
+ */
 function createGateway(peer) {
   return {
     async invoke({ namespace, method, args }) {
       if (namespace === 'test' && method === 'echo') return { echoed: args, peer: peer.id }
+      if (namespace === 'test' && method === 'outcome') return { outcomes: [...outcomes] }
       if (namespace === 'test' && method === 'fail') {
         const error = new Error('the requested method failed on purpose')
         error.code = 'TEST_FAILURE'
@@ -64,6 +82,20 @@ function createGateway(peer) {
       const count = typeof args.count === 'number' ? args.count : 3
       return (async function* generate() {
         for (let index = 0; index < count; index++) yield { index }
+      })()
+    },
+    async dispatch(endpoint, payload) {
+      if (endpoint !== '$events/result') {
+        return { ok: false, error: { code: 'METHOD_NOT_FOUND', message: `no such endpoint ${endpoint}`, details: {} } }
+      }
+      outcomes.push(payload.args)
+      return { ok: true, value: { accepted: true } }
+    },
+    async open(endpoint) {
+      if (endpoint !== '$events') throw new Error(`no such stream ${endpoint}`)
+      return (async function* generate() {
+        yield { type: 'ready', clientId: 'client-under-test', host: { home: '/home/test' } }
+        yield question
       })()
     },
   }

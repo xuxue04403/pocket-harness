@@ -60,7 +60,7 @@ class _ScanPageState extends State<ScanPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan the pairing code')),
+      appBar: AppBar(title: const Text('扫描配对二维码')),
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -100,7 +100,7 @@ class _ScanPageState extends State<ScanPage> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Text(
-                        'Point the camera at the pairing code shown on your computer.',
+                        '把镜头对准电脑上显示的配对二维码。',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white),
                       ),
@@ -151,7 +151,7 @@ class _CameraUnavailable extends StatelessWidget {
             children: [
               Icon(Icons.no_photography_outlined, size: 48, color: theme.colorScheme.error),
               const SizedBox(height: 12),
-              Text('The camera is unavailable', style: theme.textTheme.titleMedium),
+              Text('相机不可用', style: theme.textTheme.titleMedium),
               const SizedBox(height: 8),
               Text(message, textAlign: TextAlign.center, style: theme.textTheme.bodySmall),
             ],

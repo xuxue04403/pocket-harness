@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:material_ui/material_ui.dart';
 
 import '../dsh/host_link.dart';
+import '../dsh/questions.dart';
 
 /// One conversation: opening snapshot, live events, and the composer.
 ///
@@ -39,10 +40,68 @@ class _ChatPageState extends State<ChatPage> {
   /// soon as DSH commits the attempt as an `assistant/message`.
   LiveDraft? _draft;
 
+  /// Questions this Host is waiting on, oldest first.
+  ///
+  /// An approval blocks the turn until somebody answers it, so it sits above the
+  /// composer where the person is already looking; the desktop may be showing
+  /// the same prompt at the same time, and whichever answers first wins.
+  final List<PendingQuestion> _questions = [];
+  StreamSubscription<PendingQuestion>? _questionStream;
+
   @override
   void initState() {
     super.initState();
     _start();
+    _listenForQuestions();
+  }
+
+  void _listenForQuestions() {
+    _questionStream = widget.link.questions.listen(
+      (question) {
+        if (!mounted) return;
+        setState(() => _questions.add(question));
+      },
+      onError: (Object error) {
+        if (!mounted) return;
+        setState(() => _error ??= '这台电脑没有开放审批转发：$error');
+      },
+    );
+    // Opening the stream is what claims approvals for this phone; a Host that
+    // refuses it leaves the composer usable and approvals on the desktop.
+    unawaited(widget.link.startQuestions());
+  }
+
+  Future<void> _answerQuestion(PendingQuestion question, {required _Answer choice}) async {
+    setState(() => _questions.remove(question));
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      switch (choice) {
+        case _Answer.approve:
+          await widget.link.approve(question);
+        case _Answer.reject:
+          await widget.link.reject(question);
+        case _Answer.delegate:
+          await widget.link.delegate(question);
+      }
+    } on Object catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
+
+  /// Collects one choice per sub-question, then replies once.
+  Future<void> _askChoice(ChoiceQuestion question) async {
+    final picked = await showDialog<Map<String, List<String>>>(
+      context: context,
+      builder: (context) => _ChoiceDialog(question: question),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _questions.remove(question));
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.link.answerChoice(question, picked);
+    } on Object catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('$error')));
+    }
   }
 
   void _start() {
@@ -52,7 +111,7 @@ class _ChatPageState extends State<ChatPage> {
         if (mounted) setState(() => _error = '$error');
       },
       onDone: () {
-        if (mounted) setState(() => _error ??= 'The computer closed this session stream.');
+        if (mounted) setState(() => _error ??= '电脑端关闭了这个会话的实时连接。');
       },
     );
   }
@@ -167,6 +226,7 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    unawaited(_questionStream?.cancel());
     unawaited(_follow?.cancel());
     _composer.dispose();
     _scroll.dispose();
@@ -182,13 +242,23 @@ class _ChatPageState extends State<ChatPage> {
           IconButton(
             onPressed: _cancel,
             icon: const Icon(Icons.stop_circle_outlined),
-            tooltip: 'Stop the turn',
+            tooltip: '中止本轮',
           ),
         ],
       ),
       body: Column(
         children: [
           if (_error != null) _ErrorBanner(message: _error!),
+          if (_questions.isNotEmpty)
+            _QuestionBar(
+              questions: _questions,
+              onApproval: (question, approved) => _answerQuestion(
+                question,
+                choice: approved ? _Answer.approve : _Answer.reject,
+              ),
+              onChoice: _askChoice,
+              onDelegate: (question) => _answerQuestion(question, choice: _Answer.delegate),
+            ),
           Expanded(child: _body()),
           _Composer(
             controller: _composer,
@@ -260,7 +330,7 @@ class _LiveTile extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      reasoning.isEmpty ? 'Working' : 'Thinking',
+                      reasoning.isEmpty ? '运行中' : '思考中',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.outline,
                       ),
@@ -306,7 +376,7 @@ class _TranscriptTile extends StatelessWidget {
         tone: theme.colorScheme.secondaryContainer,
       ),
       ToolResultRow(:final text, :final isError) => _ToolCard(
-        title: isError ? 'Tool failed' : 'Tool result',
+        title: isError ? '工具执行失败' : '工具结果',
         body: text,
         tone: isError ? theme.colorScheme.errorContainer : theme.colorScheme.surfaceContainerHighest,
       ),
@@ -337,7 +407,7 @@ class _TranscriptTile extends StatelessWidget {
           TextButton.icon(
             onPressed: onLoadOlder,
             icon: const Icon(Icons.expand_less, size: 18),
-            label: const Text('Load earlier messages'),
+            label: const Text('加载更早的消息'),
           ),
         Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: child),
       ],
@@ -414,7 +484,7 @@ class _ReasoningState extends State<_Reasoning> {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  'Reasoning',
+                  '思考过程',
                   style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.outline),
                 ),
               ],
@@ -496,7 +566,7 @@ class _Composer extends StatelessWidget {
                 maxLines: 5,
                 textInputAction: TextInputAction.newline,
                 decoration: InputDecoration(
-                  hintText: 'Message the agent on your computer',
+                  hintText: '给电脑上的智能体发消息',
                   filled: true,
                   fillColor: theme.colorScheme.surfaceContainerHigh,
                   border: OutlineInputBorder(
@@ -517,12 +587,12 @@ class _Composer extends StatelessWidget {
               IconButton.filled(
                 onPressed: onSend,
                 icon: const Icon(Icons.send),
-                tooltip: 'Send',
+                tooltip: '发送',
               ),
             IconButton(
               onPressed: onSteer,
               icon: const Icon(Icons.bolt),
-              tooltip: 'Steer the running turn',
+              tooltip: '插入到当前轮次',
             ),
           ],
         ),
@@ -565,10 +635,10 @@ class _EmptyTranscript extends StatelessWidget {
           children: [
             Icon(Icons.forum_outlined, size: 40, color: theme.colorScheme.outline),
             const SizedBox(height: 12),
-            Text('Nothing here yet', style: theme.textTheme.titleSmall),
+            Text('这里还是空的', style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
             Text(
-              'Send a message below to start the conversation.',
+              '在下方发一条消息即可开始对话。',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall,
             ),
@@ -587,5 +657,169 @@ String _prettyJson(String raw) {
     return const JsonEncoder.withIndent('  ').convert(decoded);
   } on FormatException {
     return raw;
+  }
+}
+
+/// What the person chose for one pending question.
+enum _Answer { approve, reject, delegate }
+
+/// The band of questions blocking the turn, above the composer.
+///
+/// Only the oldest question is expanded: a queue of five stale approvals is
+/// noise, and DSH asks them one at a time anyway.
+class _QuestionBar extends StatelessWidget {
+  const _QuestionBar({
+    required this.questions,
+    required this.onApproval,
+    required this.onChoice,
+    required this.onDelegate,
+  });
+
+  final List<PendingQuestion> questions;
+  final void Function(PendingQuestion question, bool approved) onApproval;
+  final void Function(ChoiceQuestion question) onChoice;
+  final void Function(PendingQuestion question) onDelegate;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final question = questions.first;
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.help_outline, size: 16, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  questions.length == 1
+                      ? '这个工具在等你确认'
+                      : '还有 ${questions.length} 个问题在等待回答',
+                  style: theme.textTheme.labelMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(question.title, style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 8),
+          if (question is ChoiceQuestion)
+            Row(
+              children: [
+                FilledButton(
+                  onPressed: () => onChoice(question),
+                  child: const Text('回答'),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () => onDelegate(question),
+                  child: const Text('回电脑上处理'),
+                ),
+              ],
+            )
+          else
+            Wrap(
+              spacing: 8,
+              children: [
+                FilledButton(
+                  onPressed: () => onApproval(question, true),
+                  child: const Text('允许一次'),
+                ),
+                OutlinedButton(
+                  onPressed: () => onApproval(question, false),
+                  child: const Text('拒绝'),
+                ),
+                TextButton(
+                  onPressed: () => onDelegate(question),
+                  child: const Text('回电脑上处理'),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Collects one answer per sub-question of a choice prompt.
+class _ChoiceDialog extends StatefulWidget {
+  const _ChoiceDialog({required this.question});
+
+  final ChoiceQuestion question;
+
+  @override
+  State<_ChoiceDialog> createState() => _ChoiceDialogState();
+}
+
+class _ChoiceDialogState extends State<_ChoiceDialog> {
+  final Map<String, Set<String>> _selected = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('回答问题'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final question in widget.question.questions) ...[
+              if (question.header != null)
+                Text(question.header!, style: theme.textTheme.labelSmall),
+              Text(question.question, style: theme.textTheme.bodyMedium),
+              if (question.detail != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(question.detail!, style: theme.textTheme.bodySmall),
+                ),
+              const SizedBox(height: 4),
+              for (final option in question.options)
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _selected[question.id]?.contains(option.label) ?? false,
+                  title: Text(option.label, style: theme.textTheme.bodyMedium),
+                  subtitle: option.description == null ? null : Text(option.description!),
+                  onChanged: (checked) {
+                    setState(() {
+                      final chosen = _selected.putIfAbsent(question.id, () => <String>{});
+                      if (checked ?? false) {
+                        // Single-select prompts replace the previous pick; a
+                        // multi-select one accumulates.
+                        if (!question.multiSelect) chosen.clear();
+                        chosen.add(option.label);
+                      } else {
+                        chosen.remove(option.label);
+                      }
+                    });
+                  },
+                ),
+              const SizedBox(height: 12),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.of(context).pop(<String, List<String>>{
+              for (final entry in _selected.entries) entry.key: entry.value.toList(),
+            });
+          },
+          child: const Text('提交回答'),
+        ),
+      ],
+    );
   }
 }

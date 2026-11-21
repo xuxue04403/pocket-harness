@@ -97,6 +97,38 @@ void main() {
       }
     }, timeout: const Timeout(Duration(seconds: 60)));
 
+    test('answers a forwarded question and reads the outcome back', () async {
+      if (!_hostAvailable()) {
+        markTestSkipped('the Host smoke script or the Harness executable is missing');
+        return;
+      }
+      final link = await LinkClient.connect(ticket, DeviceIdentity.generate());
+      try {
+        final events = await RemoteEvents.open(link.rpc);
+        addTearDown(events.close);
+        expect(events.clientId, 'client-under-test');
+        expect(events.home, '/home/test');
+
+        final invocation = await events.invocations.first.timeout(const Duration(seconds: 10));
+        expect(invocation.event, 'approval/request');
+        expect(invocation.eventId, 'evt-1');
+        expect(invocation.agentId, 'agent-under-test');
+        expect(invocation.request['toolName'], 'shell');
+
+        await events.answer(invocation, value: 'allowed-once');
+        final recorded = await link.rpc.call('test/outcome', {});
+        expect(recorded['outcomes'], [
+          {
+            'clientId': 'client-under-test',
+            'eventId': 'evt-1',
+            'outcome': {'kind': 'result', 'value': 'allowed-once'},
+          }
+        ]);
+      } finally {
+        await link.close();
+      }
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
     test('refuses a client that does not know the pairing secret', () async {
       if (!_hostAvailable()) {
         markTestSkipped('the Host smoke script or the Harness executable is missing');

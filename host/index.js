@@ -155,11 +155,58 @@ async function startRelay(ctx, config, state, server) {
   return dialer
 }
 
-/** Adapts one phone Peer to the Typert gateway the rest of DSH already speaks. */
+/**
+ * Adapts one phone Peer to the Typert gateway the rest of DSH already speaks.
+ *
+ * `invoke`/`stream` cover ordinary `namespace/method` endpoints. The Gateway's
+ * own names (`$events`, `$events/result`) are not business pairs, so they need
+ * the carrier seam underneath: `dispatchRpc` for unary results and
+ * `openWireStream` for streams. Both are undocumented internals, hence the
+ * runtime shape checks and the graceful "unsupported" fallback.
+ */
 function gatewayFor(ctx, peer) {
+  const gateway = ctx.typertGateway
   return {
-    invoke: request => ctx.typertGateway.invoke({ ...request, peer }),
-    stream: request => ctx.typertGateway.stream({ ...request, peer }),
+    invoke: request => gateway.invoke({ ...request, peer }),
+    stream: request => gateway.stream({ ...request, peer }),
+    dispatch: (endpoint, payload, signal) => {
+      const dispatchRpc = gateway.dispatchRpc
+      if (typeof dispatchRpc !== 'function') {
+        return Promise.resolve({
+          ok: false,
+          error: {
+            code: 'UNSUPPORTED',
+            message: 'this Harness build does not expose the Gateway carrier dispatcher',
+            details: {},
+          },
+        })
+      }
+      return dispatchRpc.call(gateway, endpoint, payload, signal ?? new AbortController().signal, peer)
+    },
+    open: async (endpoint, payload, signal) => {
+      const openWireStream = gateway.openWireStream
+      if (typeof openWireStream !== 'function') {
+        throw new Error('this Harness build does not expose the Gateway carrier stream opener')
+      }
+      // Harness 0.2.x moved the signal from slot 3 to slot 5 and added the peer
+      // and a control controller; older builds keep `(endpoint, payload, signal)`.
+      const control = new AbortController()
+      const abort = () => control.abort(signal.reason)
+      if (signal.aborted) abort()
+      else signal.addEventListener('abort', abort, { once: true })
+      return openWireStream.length >= 5
+        ? openWireStream.call(gateway, endpoint, payload, endedUplink(), peer, signal, control)
+        : openWireStream.call(gateway, endpoint, payload, signal)
+    },
+  }
+}
+
+/** An uplink nobody sends on, so a Gateway-owned stream opens without buffering. */
+function endedUplink() {
+  return {
+    [Symbol.asyncIterator]() {
+      return { next: () => Promise.resolve({ done: true, value: undefined }) }
+    },
   }
 }
 

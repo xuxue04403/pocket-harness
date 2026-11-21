@@ -58,14 +58,14 @@ class _SessionsPageState extends State<SessionsPage> {
   String _describe(Object error) {
     if (error is LinkRefusedError) {
       return switch (error.reason) {
-        'not-paired' => 'This computer does not recognise this phone yet. Scan a fresh pairing code from its log.',
-        'pairing-expired' => 'The pairing code expired. Open the Pocket Harness log on the computer and scan the current code.',
-        'bad-proof' => 'The pairing code did not match. Scan the current code from the computer.',
-        _ => 'The computer refused the connection (${error.reason}).',
+        'not-paired' => '这台电脑还不认识这部手机。请在电脑日志里取最新的配对码重新扫描。',
+        'pairing-expired' => '配对码已过期。请打开电脑上的 Pocket Harness 日志，扫描当前的配对码。',
+        'bad-proof' => '配对码不匹配。请扫描电脑上当前的配对码。',
+        _ => '电脑拒绝了这次连接（${error.reason}）。',
       };
     }
     if (error is RpcException) return '${error.code}: ${error.message}';
-    return 'Could not reach the computer. Check that it is on the same network and Harness is running.\n\n$error';
+    return '连不上这台电脑。请确认手机和电脑在同一网络，并且 Harness 正在运行。\n\n$error';
   }
 
   Future<void> _refresh() async {
@@ -79,7 +79,7 @@ class _SessionsPageState extends State<SessionsPage> {
     try {
       final id = await link.createSession();
       if (!mounted) return;
-      await _open(id, 'New session');
+      await _open(id, '新建会话');
       _refresh();
     } on Object catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(_describe(error))));
@@ -121,7 +121,7 @@ class _SessionsPageState extends State<SessionsPage> {
               // relay is slower and depends on a third party being up, so it is
               // shown rather than hidden behind a generic "connected".
               Text(
-                link.route == LinkRoute.lan ? 'Local network' : 'Relayed',
+                link.route == LinkRoute.lan ? '局域网直连' : '经中继',
                 style: Theme.of(context).textTheme.labelSmall,
               ),
           ],
@@ -130,12 +130,12 @@ class _SessionsPageState extends State<SessionsPage> {
           IconButton(
             onPressed: _link == null ? null : _create,
             icon: const Icon(Icons.add_comment_outlined),
-            tooltip: 'New session',
+            tooltip: '新建会话',
           ),
           IconButton(
             onPressed: _refresh,
             icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh',
+            tooltip: '刷新',
           ),
         ],
       ),
@@ -193,12 +193,12 @@ void unawaitedClose(HostLink link) {
 }
 
 String _relative(DateTime time) {
-  if (time.millisecondsSinceEpoch == 0) return 'unknown time';
+  if (time.millisecondsSinceEpoch == 0) return '时间未知';
   final delta = DateTime.now().difference(time);
-  if (delta.inMinutes < 1) return 'just now';
-  if (delta.inHours < 1) return '${delta.inMinutes} min ago';
-  if (delta.inDays < 1) return '${delta.inHours} h ago';
-  if (delta.inDays < 30) return '${delta.inDays} d ago';
+  if (delta.inMinutes < 1) return '刚刚';
+  if (delta.inHours < 1) return '${delta.inMinutes} 分钟前';
+  if (delta.inDays < 1) return '${delta.inHours} 小时前';
+  if (delta.inDays < 30) return '${delta.inDays} 天前';
   return '${time.year}-${_two(time.month)}-${_two(time.day)}';
 }
 
@@ -221,14 +221,14 @@ class _ConnectionProblem extends StatelessWidget {
           children: [
             Icon(Icons.link_off, size: 48, color: theme.colorScheme.error),
             const SizedBox(height: 16),
-            Text('Not connected', style: theme.textTheme.titleMedium),
+            Text('连接失败', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(message, textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),
-              label: const Text('Try again'),
+              label: const Text('重试'),
             ),
           ],
         ),
@@ -253,10 +253,10 @@ class _NoSessions extends StatelessWidget {
           children: [
             Icon(Icons.forum_outlined, size: 48, color: theme.colorScheme.primary),
             const SizedBox(height: 16),
-            Text('No sessions yet', style: theme.textTheme.titleMedium),
+            Text('还没有会话', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              'Start one here, or open a session on the computer and pull to refresh.',
+              '在这里新建一个，或先在电脑上打开某个会话，再下拉刷新。',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium,
             ),
@@ -264,7 +264,7 @@ class _NoSessions extends StatelessWidget {
             FilledButton.icon(
               onPressed: onCreate,
               icon: const Icon(Icons.add_comment_outlined),
-              label: const Text('New session'),
+              label: const Text('新建会话'),
             ),
           ],
         ),

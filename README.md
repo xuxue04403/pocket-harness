@@ -1,15 +1,13 @@
 # Pocket Harness
 
-Drive a DeepSeek Harness running on your computer from your phone, over an end-to-end encrypted link.
+用手机操控跑在电脑上的 DeepSeek Harness，链路端到端加密。
 
-The computer keeps the workspace, the agent runtime and the session history. The phone is a window onto it: pair
-once by scanning a code, then list sessions, read transcripts, and send prompts from anywhere on the same network —
-or across the internet through a relay you run yourself.
+工作区、智能体运行时与会话历史全部留在电脑上，手机只是一扇窗：扫一次码完成配对，之后就能在外面列会话、读记录、发提示词——同一个局域网里直连，跨网络时走你自己部署的中继。
 
-Nothing is stored on anyone else's server. There is no account system, no hosted broker and no telemetry.
+数据不经过任何第三方服务器。没有账号体系，没有托管的中转，也没有遥测。
 
 ```
- phone (Flutter)                                computer (DeepSeek Harness)
+ 手机（Flutter）                                 电脑（DeepSeek Harness）
 ┌──────────────────────┐                      ┌──────────────────────────────┐
 │ 会话 / 对话 / 工具卡片 │  Noise IK + ChaCha20 │ dsh-pocketharness-host 插件   │
 │ dsh_link (纯 Dart)    │◄────────────────────►│  ├─ TCP 监听（局域网）        │
@@ -21,7 +19,7 @@ Nothing is stored on anyone else's server. There is no account system, no hosted
     └──────────────┘
 ```
 
-## What works today
+## 当前能力
 
 | 能力 | 状态 |
 |---|---|
@@ -32,11 +30,12 @@ Nothing is stored on anyone else's server. There is no account system, no hosted
 | 发送提示词、抢断、停止 | ✅ |
 | 运行中逐字流式显示 | ✅ 思考与正文分栏 |
 | 工具调用与结果卡片 | ✅ |
+| 工具审批与提问（在手机上回答） | ✅ 拒答即 fail-closed，也可转回电脑 |
 | Android | ✅ 模拟器与构建均通过 |
 | HarmonyOS 7.0 | ⏳ 二期，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
 | WebRTC P2P / TURN | ⏳ 二期（局域网直连 + 中继已覆盖当前场景） |
 
-## Repository layout
+## 仓库结构
 
 | 目录 | 内容 |
 |---|---|
@@ -47,7 +46,7 @@ Nothing is stored on anyone else's server. There is no account system, no hosted
 | [`docs/`](docs) | 设计文档与打包说明 |
 | [`probe/`](probe) | 诊断脚本（金标向量回放、真实 Harness 探测） |
 
-## Quick start
+## 快速开始
 
 ### 1. 在电脑上装 Host 插件
 
@@ -90,14 +89,20 @@ node run.mjs          # 监听 8080，/healthz 可探活
 ## 开发
 
 ```powershell
-# Dart 协议层：38 个测试
+# Dart 协议层：39 个测试
 cd packages\dsh_link; dart analyze; dart test
 
-# Host 插件与中继：11 个测试
+# Host 插件与中继：12 个测试
 node --test host
 
-# Flutter 客户端：11 个测试
+# Flutter 客户端：16 个测试
 cd app; flutter analyze; flutter test
+```
+
+需要**运行中的 Harness** 的那一组（现场生成票据，Harness 没开会自动 skip）：
+
+```powershell
+cd packages\dsh_link; dart test tool/live_events_test.dart
 ```
 
 金标向量来自 MIT 授权的 `ds-harness-remote` fixtures，用来证明我们的 Noise IK 与 AEAD 与参考实现**字节级**一致：
@@ -109,17 +114,18 @@ node probe/noise_vector.mjs     # 完整握手 + 传输密钥回放
 
 设计细节见 [docs/superpowers/specs/2026-11-20-pocket-harness-design.md](docs/superpowers/specs/2026-11-20-pocket-harness-design.md)。
 
-## Security
+## 安全
 
 - 所有业务数据走 Noise IK（`Noise_IK_25519_ChaChaPoly_SHA256`）端到端加密；中继与局域网中间设备只见密文。
 - 设备私钥只存在电脑的 DSH credentials 服务与手机的应用私有目录里，不进日志、不落明文文件。
 - 对端公钥按设备固定，变化即拒绝握手，需人工确认才能重新配对。
-- 工具审批沿用 Harness 自身语义：只有「允许一次」与「拒绝」。
+- 工具审批沿用 Harness 自身语义：只有「允许一次」与「拒绝」，其余一律 fail-closed。
+- 审批与提问由手机作为 owner Peer 抢占 DSH 的 `$events` 转发流；同一时刻只有一端能回答，答不上可以一键转回电脑。
 - 明文 TCP 只承载密文帧；公网走 `wss://`。
 
 发现安全问题请私下联系维护者，不要先开公开 issue。
 
-## License
+## 许可
 
 MIT，见 [LICENSE](LICENSE)。第三方归属见 [NOTICE](NOTICE)。
 

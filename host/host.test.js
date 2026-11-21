@@ -8,6 +8,7 @@
 // Run with: node --test host
 
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
 
 import { credentialKey, parseCredentialKey } from './credentials-key.js'
@@ -16,6 +17,8 @@ import { isDeviceId, newDeviceId, newMessageId } from './ids.js'
 import { createTicket, decodeTicket, encodeTicket, isTicketValid } from './pairing.js'
 import { NoiseIkResponder, createNoisePrologue, x25519PrivateToPublic } from './noise.js'
 import { open, seal } from './chacha20_poly1305.js'
+import { encodeEnvelope, envelope } from './envelope.js'
+import { RpcServer } from './rpc.js'
 
 test('credential keys mirror the credentials service rules', () => {
   assert.equal(credentialKey('dsh-pocketharness-host', 'identity'), 'dsh-pocketharness-host/identity')
@@ -94,4 +97,37 @@ test('the responder rejects a prologue that names another connection', () => {
     localPublicKey: x25519PrivateToPublic(Buffer.alloc(32, 3)),
     prologue,
   }).readHandshakeMessage, 'function')
+})
+
+test('gateway endpoints reach the carrier seam, business ones do not', async () => {
+  const sent = []
+  const channel = new EventEmitter()
+  channel.send = bytes => sent.push(JSON.parse(Buffer.from(bytes).toString('utf8')))
+  const seen = []
+  const gateway = {
+    invoke: async request => { seen.push(['invoke', request.namespace, request.method]); return { echoed: true } },
+    stream: async request => { seen.push(['stream', request.namespace, request.method]); return (async function* () { yield { n: 1 } })() },
+    dispatch: async (endpoint, payload) => { seen.push(['dispatch', endpoint, payload.args]); return { ok: true, value: { clientId: 'c1' } } },
+    open: async (endpoint, payload) => { seen.push(['open', endpoint, payload.args]); return (async function* () { yield { type: 'ready', clientId: 'c1' } })() },
+  }
+  const server = new RpcServer({ channel, gateway, peer: { id: 'peer' } })
+  const request = async (id, endpoint, args) => {
+    channel.emit('message', encodeEnvelope(envelope({ type: 'request', id, payload: { endpoint, payload: { args } } })))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    return sent.find(entry => entry.id === id)
+  }
+
+  const unary = await request('r1', '$events/result', { clientId: 'c1', eventId: 'e1', outcome: { kind: 'next' } })
+  assert.deepEqual(unary.payload, { clientId: 'c1' })
+  assert.deepEqual(seen.at(-1), ['dispatch', '$events/result', { clientId: 'c1', eventId: 'e1', outcome: { kind: 'next' } }])
+
+  const opened = await request('r2', 'link/stream.open', { endpoint: '$events', args: {} })
+  assert.equal(typeof opened.payload.streamId, 'number')
+  assert.deepEqual(seen.at(-1), ['open', '$events', {}])
+  const frame = sent.find(entry => entry.type === 'event' && entry.payload.streamId === opened.payload.streamId)
+  assert.deepEqual(frame.payload.value, { type: 'ready', clientId: 'c1' })
+
+  await request('r3', 'session/list', { _request: {} })
+  assert.deepEqual(seen.at(-1), ['invoke', 'session', 'list'])
+  await server.close()
 })

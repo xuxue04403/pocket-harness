@@ -99,6 +99,12 @@ export class RpcServer extends EventEmitter {
       this.#closeStream(id, args)
       return
     }
+    // Gateway-internal names (`$events`, `$events/result`) bypass the business
+    // dispatcher: the Typert gateway owns them, and `$events` has no slash pair.
+    if (isGatewayEndpoint(endpoint)) {
+      await this.#invokeGatewayEndpoint(id, endpoint, args)
+      return
+    }
     const split = splitEndpoint(endpoint)
     if (split === null) {
       this.#sendError(id, 'PROTOCOL_ERROR', `the endpoint ${endpoint} is not namespace/method`)
@@ -117,6 +123,26 @@ export class RpcServer extends EventEmitter {
     }
   }
 
+  /** Calls a Gateway-internal unary endpoint, which returns `{ok, value|error}`. */
+  async #invokeGatewayEndpoint(id, endpoint, args) {
+    if (typeof this.#gateway.dispatch !== 'function') {
+      this.#sendError(id, 'UNSUPPORTED', 'this Host does not expose gateway endpoints')
+      return
+    }
+    const result = await this.#gateway.dispatch(endpoint, { args: args ?? {} })
+    if (result?.ok === true) {
+      this.#sendResponse(id, result.value === undefined ? {} : result.value)
+      return
+    }
+    const error = result?.error ?? {}
+    this.#sendError(
+      id,
+      typeof error.code === 'string' ? error.code : 'HOST_ERROR',
+      typeof error.message === 'string' ? error.message : 'the Host rejected the request',
+      error.details,
+    )
+  }
+
   async #openStream(id, args) {
     if (this.#streams.size >= MAX_STREAMS) {
       this.#sendError(id, 'STREAM_LIMIT', `at most ${MAX_STREAMS} streams may be open`)
@@ -125,6 +151,10 @@ export class RpcServer extends EventEmitter {
     const endpoint = args?.endpoint
     if (typeof endpoint !== 'string') {
       this.#sendError(id, 'PROTOCOL_ERROR', 'stream.open needs an endpoint')
+      return
+    }
+    if (isGatewayEndpoint(endpoint)) {
+      await this.#openGatewayStream(id, endpoint, args)
       return
     }
     const split = splitEndpoint(endpoint)
@@ -142,6 +172,26 @@ export class RpcServer extends EventEmitter {
         peer: this.#peer,
         signal: aborter.signal,
       })
+      streamId = this.#nextStreamId++
+      this.#streams.set(streamId, { aborter, source })
+      this.#sendResponse(id, { streamId })
+    } catch (error) {
+      this.#sendFailure(id, error)
+      return
+    }
+    void this.#pump(streamId, this.#streams.get(streamId))
+  }
+
+  /** Opens a Gateway-internal stream such as `$events` through the carrier seam. */
+  async #openGatewayStream(id, endpoint, args) {
+    if (typeof this.#gateway.open !== 'function') {
+      this.#sendError(id, 'UNSUPPORTED', 'this Host does not expose gateway streams')
+      return
+    }
+    const aborter = new AbortController()
+    let streamId
+    try {
+      const source = await this.#gateway.open(endpoint, { args: args?.args ?? {} }, aborter.signal)
       streamId = this.#nextStreamId++
       this.#streams.set(streamId, { aborter, source })
       this.#sendResponse(id, { streamId })
@@ -217,6 +267,16 @@ export class RpcServer extends EventEmitter {
     await this.#shutdown(new Error('the RPC server closed'))
     await Promise.allSettled([...this.#inflight])
   }
+}
+
+/**
+ * True for a Gateway-internal endpoint such as `$events` or `$events/result`.
+ *
+ * Those names are not business `namespace/method` pairs: the Typert gateway
+ * resolves them itself, so they must reach its carrier dispatcher untouched.
+ */
+export function isGatewayEndpoint(endpoint) {
+  return typeof endpoint === 'string' && endpoint.startsWith('$')
 }
 
 /** Splits `namespace/method`, rejecting anything else. */

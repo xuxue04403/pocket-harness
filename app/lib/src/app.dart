@@ -86,7 +86,7 @@ class _StartupError extends StatelessWidget {
             children: [
               const Icon(Icons.error_outline, size: 48),
               const SizedBox(height: 12),
-              Text('Pocket Harness could not start', style: Theme.of(context).textTheme.titleMedium),
+              Text('Pocket Harness 启动失败', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               Text(message, textAlign: TextAlign.center),
             ],

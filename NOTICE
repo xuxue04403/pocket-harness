@@ -1,43 +1,39 @@
 Pocket Harness
 Copyright (c) 2026 Pocket Harness contributors
-Licensed under the MIT License (see LICENSE).
+本项目以 MIT 许可发布，全文见 LICENSE。
 
-This product includes work derived from, or validated against, the following
-third-party projects. No code from any AGPL-licensed project is included.
+本项目包含、或已对照验证过以下第三方成果。项目内不含任何 AGPL 许可项目的代码。
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------
 ds-harness-remote  —  MIT
 https://github.com/liguobao/ds-harness-remote
 Copyright (c) 2026 DSH Remote contributors
 
-Used as follows:
-  * fixtures/crypto/v1/noise-ik.json — the Noise IK golden vector. It is copied
-    verbatim into probe/noise-fixture.b64 and packages/dsh_link/test/vectors/,
-    and both our Dart and JavaScript implementations are tested against it so
-    interoperability with the reference implementation is proven bit for bit.
-  * Design ideas only, no source files copied: the Noise IK prologue binding,
-    the DSHF fragmentation header layout, and the "Host only dials out" model
-    for reaching a machine that has no public address.
+使用方式：
+  * fixtures/crypto/v1/noise-ik.json —— Noise IK 金标向量。该文件被逐字节复制进
+    probe/noise-fixture.b64 与 packages/dsh_link/test/vectors/，我们的 Dart 与
+    JavaScript 两套实现都对它回放断言，以此证明与参考实现字节级互通。
+  * 仅借鉴设计思路，未复制任何源文件：Noise IK 的 prologue 绑定方式、DSHF 分片头
+    的字段布局、以及「Host 只主动出站」这一用于触达无公网地址机器的模型。
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------
 DeepSeek Harness  —  MIT
 https://github.com/deepseek-ai
-The Host plugin is written against the public plugin API and the Typert API
-gateway of the installed Harness. No Harness source is bundled here.
+Host 插件只使用已安装 Harness 对外公开的插件 API 与 Typert API 网关编写，
+本仓库不打包任何 Harness 源码。
 
---------------------------------------------------------------------------------
-Flutter, Dart  —  BSD 3-Clause
+------------------------------------------------------------------
+Flutter、Dart  —  BSD 3-Clause
 https://flutter.dev
 
---------------------------------------------------------------------------------
-mobile_scanner  —  MIT            https://pub.dev/packages/mobile_scanner
-shared_preferences  —  BSD 3-Clause  https://pub.dev/packages/shared_preferences
-crypto (Dart)  —  BSD 3-Clause     https://pub.dev/packages/crypto
-ws (Node)  —  MIT                  https://github.com/websockets/ws
+------------------------------------------------------------------
+mobile_scanner      —  MIT            https://pub.dev/packages/mobile_scanner
+shared_preferences  —  BSD 3-Clause   https://pub.dev/packages/shared_preferences
+crypto（Dart）       —  BSD 3-Clause   https://pub.dev/packages/crypto
+ws（Node）           —  MIT            https://github.com/websockets/ws
 
---------------------------------------------------------------------------------
-A note on dsh-Go
-https://github.com/ccch1mneyyy/dsh-Go is AGPL-3.0. This project does not use its
-code, its name, or its artwork. Its documentation was read to learn what is
-feasible on HarmonyOS (for example that Flutter's HarmonyOS AOT toolchain only
-ships for macOS arm64) — facts, not code.
+------------------------------------------------------------------
+关于 dsh-Go
+https://github.com/ccch1mneyyy/dsh-Go 采用 AGPL-3.0。本项目未使用其代码、名称或
+美术素材。我们只阅读了它的文档，用以了解鸿蒙平台上的可行性（例如 Flutter 的鸿蒙
+AOT 工具链只发布 macOS arm64 版本）——那是事实，不是代码。

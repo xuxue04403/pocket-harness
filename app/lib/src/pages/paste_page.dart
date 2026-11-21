@@ -20,7 +20,7 @@ class _PastePageState extends State<PastePage> {
   void _submit() {
     final text = _controller.text.trim();
     if (text.isEmpty) {
-      setState(() => _error = 'Paste the pairing code first.');
+      setState(() => _error = '请先粘贴配对码。');
       return;
     }
     try {
@@ -40,15 +40,14 @@ class _PastePageState extends State<PastePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Enter the pairing code')),
+      appBar: AppBar(title: const Text('输入配对码')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'The code starts with pocketharness://pair and is printed in the '
-              'Pocket Harness log on your computer.',
+              '配对码以 pocketharness://pair 开头，会打印在电脑上的 Pocket Harness 日志里。',
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 16),
@@ -68,7 +67,7 @@ class _PastePageState extends State<PastePage> {
               },
             ),
             const SizedBox(height: 16),
-            FilledButton(onPressed: _submit, child: const Text('Pair')),
+            FilledButton(onPressed: _submit, child: const Text('配对')),
           ],
         ),
       ),

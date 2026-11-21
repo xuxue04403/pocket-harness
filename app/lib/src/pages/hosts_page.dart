@@ -46,14 +46,14 @@ class _HostsPageState extends State<HostsPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Forget this Host?'),
+        title: const Text('忘记这台电脑？'),
         content: Text(
           '${ticket.hostName} will ask for a new pairing code next time. '
-          'Sessions stay on the Host.',
+          '会话仍然保留在电脑上。',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Forget')),
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('忘记')),
         ],
       ),
     );
@@ -83,12 +83,12 @@ class _HostsPageState extends State<HostsPage> {
           IconButton(
             onPressed: _scan,
             icon: const Icon(Icons.qr_code_scanner),
-            tooltip: 'Pair a Host',
+            tooltip: '扫码配对',
           ),
           IconButton(
             onPressed: _paste,
             icon: const Icon(Icons.keyboard),
-            tooltip: 'Enter a pairing code',
+            tooltip: '手动输入配对码',
           ),
         ],
       ),
@@ -97,7 +97,7 @@ class _HostsPageState extends State<HostsPage> {
           : FloatingActionButton.extended(
               onPressed: _scan,
               icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Pair'),
+              label: const Text('配对'),
             ),
       body: _hosts.isEmpty
           ? _EmptyState(onScan: _scan, onPaste: _paste)
@@ -124,7 +124,7 @@ class _HostsPageState extends State<HostsPage> {
           trailing: IconButton(
             onPressed: () => _forget(ticket),
             icon: const Icon(Icons.link_off),
-            tooltip: 'Forget',
+            tooltip: '忘记',
           ),
           onTap: () => _open(ticket),
         );
@@ -135,9 +135,9 @@ class _HostsPageState extends State<HostsPage> {
   String _subtitle(PairingTicket ticket, bool expired) {
     final addresses = ticket.lanEndpoints.take(2).join(', ');
     if (expired) {
-      return 'Paired earlier · $addresses\nIts pairing code lapsed, but this phone is still trusted.';
+      return '之前已配对 · $addresses\n配对码已过期，但这台手机仍然受信任。';
     }
-    return addresses.isEmpty ? 'No LAN address in the code' : addresses;
+    return addresses.isEmpty ? '配对码里没有局域网地址' : addresses;
   }
 }
 
@@ -158,12 +158,11 @@ class _EmptyState extends StatelessWidget {
           children: [
             Icon(Icons.qr_code_2, size: 64, color: theme.colorScheme.primary),
             const SizedBox(height: 16),
-            Text('Pair your desktop', style: theme.textTheme.titleLarge),
+            Text('配对你的电脑', style: theme.textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
-              'Open DeepSeek Harness on your computer, find the Pocket Harness '
-              'pairing code in its log, and scan it here. The phone and the '
-              'computer then talk directly over your network, end to end encrypted.',
+              '在电脑上打开 DeepSeek Harness，从日志里找到 Pocket Harness 的配对码，在这里扫描。'
+              '之后手机和电脑会直接通过网络通信，全程端到端加密。',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium,
             ),
@@ -171,13 +170,13 @@ class _EmptyState extends StatelessWidget {
             FilledButton.icon(
               onPressed: onScan,
               icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scan the pairing code'),
+              label: const Text('扫描配对二维码'),
             ),
             const SizedBox(height: 8),
             TextButton.icon(
               onPressed: onPaste,
               icon: const Icon(Icons.keyboard),
-              label: const Text('Enter it by hand instead'),
+              label: const Text('改为手动输入'),
             ),
           ],
         ),

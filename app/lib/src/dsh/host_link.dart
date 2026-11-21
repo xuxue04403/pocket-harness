@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:dsh_link/dsh_link.dart';
 
+import 'questions.dart';
+
 /// One Host summary as the session list needs it.
 class SessionSummary {
   const SessionSummary({
@@ -35,7 +37,7 @@ class SessionSummary {
     final updated = value['updatedAt'];
     return SessionSummary(
       sessionId: id,
-      title: title is String && title.isNotEmpty ? title : 'Untitled session',
+      title: title is String && title.isNotEmpty ? title : '未命名会话',
       updatedAt: updated is num
           ? DateTime.fromMillisecondsSinceEpoch(updated.toInt())
           : DateTime.fromMillisecondsSinceEpoch(0),
@@ -350,5 +352,90 @@ class HostLink {
     });
   }
 
-  Future<void> close() => _client.close();
+  /// The questions this Host is waiting on, as they arrive.
+  ///
+  /// Call [startQuestions] once before listening. DSH hands a pending approval
+  /// to whichever client claimed the event stream, so the subscription is kept
+  /// for the life of the link: dropping it would silently push every future
+  /// approval back to the desktop.
+  Stream<PendingQuestion> get questions => _questions.stream;
+
+  final StreamController<PendingQuestion> _questions = StreamController<PendingQuestion>.broadcast();
+  RemoteEvents? _events;
+  Future<void>? _starting;
+  bool _questionStreamDead = false;
+
+  /// Opens the forwarded-event stream. Safe to call twice.
+  ///
+  /// A Host that refuses it (older Harness, or one whose gateway has no event
+  /// carrier) leaves [questions] empty rather than failing the whole link, so the
+  /// phone still reads and writes sessions; only approvals stay on the desktop.
+  Future<void> startQuestions() {
+    return _starting ??= _openQuestions();
+  }
+
+  Future<void> _openQuestions() async {
+    try {
+      final events = _events = await RemoteEvents.open(_client.rpc);
+      events.invocations.listen((invocation) {
+        final question = readQuestion(invocation);
+        if (question == null) {
+          // Unrenderable questions go back to the desktop rather than hanging:
+          // an unanswered waterfall would block the turn forever.
+          unawaited(events.answer(invocation, delegate: true));
+          return;
+        }
+        if (events.isCancelled(invocation)) return;
+        if (!_questions.isClosed) _questions.add(question);
+      }, onError: (Object error, StackTrace stack) {
+        _questionStreamDead = true;
+        if (!_questions.isClosed) _questions.addError(error, stack);
+      });
+    } catch (error) {
+      _questionStreamDead = true;
+      _questions.addError(error);
+    }
+  }
+
+  /// Whether the Host refuses to forward questions to this phone.
+  bool get questionsUnavailable => _questionStreamDead;
+
+  /// Approves one tool run for this call only.
+  Future<void> approve(PendingQuestion question) async {
+    final events = _events;
+    if (events == null) throw StateError('the question stream is not open');
+    await events.answer(question.invocation, value: approvalAllowedOnce);
+  }
+
+  /// Refuses one tool run.
+  Future<void> reject(PendingQuestion question) async {
+    final events = _events;
+    if (events == null) throw StateError('the question stream is not open');
+    await events.answer(question.invocation, value: approvalRejected);
+  }
+
+  /// Answers a multiple-choice question.
+  Future<void> answerChoice(
+    ChoiceQuestion question,
+    Map<String, List<String>> selections, {
+    Map<String, String> custom = const {},
+  }) async {
+    final events = _events;
+    if (events == null) throw StateError('the question stream is not open');
+    await events.answer(question.invocation, value: question.answerValue(selections, custom: custom));
+  }
+
+  /// Hands a question to the next listener, i.e. the desktop.
+  Future<void> delegate(PendingQuestion question) async {
+    final events = _events;
+    if (events == null) throw StateError('the question stream is not open');
+    await events.answer(question.invocation, delegate: true);
+  }
+
+  Future<void> close() async {
+    await _events?.close();
+    _events = null;
+    if (!_questions.isClosed) await _questions.close();
+    await _client.close();
+  }
 }

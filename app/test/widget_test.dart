@@ -1,5 +1,7 @@
+import 'package:dsh_link/dsh_link.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pocket_harness/src/dsh/host_link.dart';
+import 'package:pocket_harness/src/dsh/questions.dart';
 
 /// Transcript rendering is the one piece of the phone UI with real logic, and
 /// it runs against records captured from a real Host, so it is tested here
@@ -129,7 +131,7 @@ void main() {
       final summary = SessionSummary.fromJson({'sessionId': 's2', 'updatedAt': 0});
 
       expect(summary, isNotNull);
-      expect(summary!.title, 'Untitled session');
+      expect(summary!.title, '未命名会话');
       expect(summary.cwd, isNull);
       expect(summary.running, isFalse);
     });
@@ -174,6 +176,8 @@ void main() {
       expect(draft.isEmpty, isTrue);
     });
   });
+
+  _questionTests();
 }
 
 /// Wraps one durable event the way the Host's journal delivers it.
@@ -187,4 +191,83 @@ Map<String, Object?> _event(String type, int seq, Map<String, Object?> data) {
       'data': data,
     },
   };
+}
+
+void _questionTests() {
+  group('readQuestion', () {
+    RemoteInvocation invocation(String event, Map<String, Object?> request) => RemoteInvocation(
+          event: event,
+          eventId: 'evt',
+          agentId: 'agent',
+          request: request,
+        );
+
+    test('turns an approval into a yes/no question', () {
+      final question = readQuestion(invocation('approval/request', {
+        'toolName': 'shell',
+        'displayReason': {'en': 'run a command', 'zh': '运行命令'},
+      }));
+      expect(question, isA<ApprovalQuestion>());
+      final approval = question! as ApprovalQuestion;
+      expect(approval.isApproval, isTrue);
+      expect(approval.toolName, 'shell');
+      expect(approval.title, 'shell: run a command');
+      expect(approval.invocation.eventId, 'evt');
+    });
+
+    test('falls back to the plain reason when there is no display reason', () {
+      final approval = readQuestion(invocation('approval/request', {
+        'toolName': 'write',
+        'reason': 'edit a file',
+      }))! as ApprovalQuestion;
+      expect(approval.title, 'write: edit a file');
+    });
+
+    test('reads choice questions and their options', () {
+      final question = readQuestion(invocation('user-questions/request', {
+        'questions': [
+          {
+            'id': 'q1',
+            'question': 'Which colour?',
+            'header': 'Style',
+            'options': [
+              {'label': 'red', 'description': 'warm'},
+              'blue',
+            ],
+          },
+        ],
+      }));
+      expect(question, isA<ChoiceQuestion>());
+      final choice = question! as ChoiceQuestion;
+      expect(choice.isApproval, isFalse);
+      expect(choice.questions.single.id, 'q1');
+      expect(choice.questions.single.multiSelect, isFalse);
+      expect(choice.questions.single.options.map((option) => option.label), ['red', 'blue']);
+      expect(choice.questions.single.options.first.description, 'warm');
+    });
+
+    test('encodes the answer value the Host expects', () {
+      final choice = readQuestion(invocation('user-questions/request', {
+        'questions': [
+          {'id': 'q1', 'question': 'One?', 'options': ['a', 'b']},
+          {'id': 'q2', 'question': 'Two?', 'options': ['c'], 'multiSelect': true},
+        ],
+      }))! as ChoiceQuestion;
+      final value = choice.answerValue({
+        'q1': ['b'],
+        'q2': ['c'],
+      });
+      expect(value, {
+        'answers': [
+          {'id': 'q1', 'selected': ['b']},
+          {'id': 'q2', 'selected': ['c']},
+        ],
+      });
+    });
+
+    test('ignores events and prompts it cannot render', () {
+      expect(readQuestion(invocation('session/event', {})), isNull);
+      expect(readQuestion(invocation('user-questions/request', {'questions': []})), isNull);
+    });
+  });
 }

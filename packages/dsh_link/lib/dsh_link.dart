@@ -7,6 +7,7 @@ export 'src/crypto/curve25519.dart';
 export 'src/crypto/noise_ik.dart';
 export 'src/pairing/pairing.dart';
 export 'src/rpc/envelope.dart';
+export 'src/rpc/remote_events.dart';
 export 'src/rpc/rpc_client.dart';
 export 'src/transport/lan_client.dart';
 export 'src/transport/relay.dart';
