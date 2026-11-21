@@ -28,10 +28,11 @@
 | `src/relay_protocol.ts` | 中继控制消息：首帧 hello、进房回执、`ready`、关闭帧里的拒绝码 |
 | `src/remote_events.ts` | 网关的 `$events` 转发流：ready 握手、取消、把一次 waterfall 变成一条回复 |
 | `src/questions.ts` | 把转发来的 waterfall 说成审批或选择题，并组装 DSH 期望的答案 |
+| `src/models.ts` | 模型清单与当前路由：把 provider 分组摊平，两种路由形状都认 |
 
 ## 为什么能信
 
-`npm test` 跑九套断言：
+`npm test` 跑十套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -61,18 +62,26 @@
    **渲染不了的返回 null**（调用方据此 delegate，别把 waterfall 挂死）、答案批次的形状、
    空白自定义答案不出现在载荷里。`test/client.ts` 另有 10 条断言把这条流真的走一遍：
    进 ready、收到 waterfall、解析成审批、回答落到 Host、delegate 发出 `next`。
+10. **`test/models.ts`** —— 模型清单与当前路由：provider 分组被摊平、`provider` 与
+    `providerName` 分开、`efforts` 保序、缺 `name` 用 id 顶上、坏条目跳过而不炸整个
+    选择器、**`selectModel` 的扁平回答与 `projections` 的 `next`/`lastUsed` 两种形状
+    都能解析**、未知路由退回 model id。
 
-`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做两件事：
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做四件事：
 
 1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
    数学正确，而是「这份代码能跟真正的 Host 说话」。
 2. 用 `session/page` 把真实会话记录拉下来喂给 `readTranscript`，统计产出的行数
-   （实测 24 个会话：用户 84 行、助手 48 行、工具 117 行）。单元测试证明解析器自洽，
+   （实测 24 个会话：用户 85 行、助手 62 行、工具 115 行）。单元测试证明解析器自洽，
    这一步证明「我以为的形状」和「Host 实际发的形状」是一回事。
 3. 起真实 Host 插件 + 真实中继，让 `LinkClient` **只带中继坐标**连过去，跑
    `test/echo` 与 `test/count`（`ARKTS RELAY ROUTE TALKS TO THE REAL HOST`）。
    这一步抓住过一个只有真链路能暴露的 bug：中继上的二进制消息**就是整帧**，
    套用 TCP 的长度前缀切帧会把帧头当长度、算出天文数字后把连接关掉。
+4. 读 `session/modelCatalog` 与若干会话的 `session/projections`，要求清单非空、
+   每条都有显示名与 provider、**每个会话报告的路由都能在清单里找到**。这里故意
+   不真的换模型——那会改掉这台电脑上真实会话的状态，选择动作的形状由第 3、10 套
+   断言钉住。
 
 ## 在鸿蒙工程里怎么用
 

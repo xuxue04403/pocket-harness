@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（521 KB，内含 `ets/modules.abc` 282,480 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（546 KB，内含 `ets/modules.abc` 308,308 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -183,6 +183,24 @@ tar.exe -tf entry\build\default\outputs\default\entry-default-unsigned.hap
 
 这两条各有一处断言：`test/questions.ts` 钉住解析与 delegate 的选择，
 `test/client.ts` 钉住「回答真的落到 Host、delegate 真的发出 `next`」。
+
+### 模型也能在手机上换
+
+对话页标题下有一行当前路由（例如 `DeepSeek-V4-Pro · high`），点「切换模型」展开
+一条面板，列出电脑上所有可用的 provider 与模型；选中后调 `session/selectModel`，
+**用 Host 回报的那一条更新标题栏**，而不是用点下去的值 —— 电脑可能把强度换成它
+自己的默认。
+
+数据侧的坑都在 `src/models.ts` 里，被 `test/models.ts` 钉住：
+
+- 清单是 `groups[] → models[]` 的两层结构，`groups[].name` 才是 provider 的显示名
+  （`id` 只是路由用的键），摊平后每一行都要同时带上 provider 与 providerName；
+- **当前路由有两种形状**：`projections` 里是 `values.modelSelection.next`（还有
+  `lastUsed` 备份），而 `selectModel` 的回答是扁平的 `{provider, model, reasoningEffort}`；
+- 一条坏记录不该让整个选择器打不开，解析器逐条跳过畸形条目。
+
+`test/live_models.ts` 用真实 Host 校验清单与路由能对上，但**故意不真的换模型** ——
+那会改掉这台电脑上真实会话的状态。
 
 ## 二期路线建议
 

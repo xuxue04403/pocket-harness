@@ -16,6 +16,17 @@ import { HostStore } from '../storage.ohos'
 import { openRelayTransport, openTcpTransport, systemRandom } from '../platform.ohos'
 import { LinkClient, LinkRefusedError } from '../core/client'
 import { stringField, type JsonObject } from '../core/json'
+import {
+  defaultEffortOf,
+  EMPTY_CATALOG,
+  readModelCatalog,
+  readProjectionSelection,
+  readModelSelection,
+  routeLabel,
+  type ModelChoice,
+  type ModelCatalog,
+  type ModelSelection,
+} from '../core/models'
 import type { StreamCancel, StreamOptions } from '../core/rpc'
 import { RemoteEvents, type RemoteInvocation } from '../core/remote_events'
 import {
@@ -93,6 +104,13 @@ struct Chat {
   @State questions: PendingQuestion[] = []
   @State questionsReady: boolean = false
   @State questionIndex: number = 0
+  /** 这台电脑能用的模型，压平后给选择面板用。 */
+  @State catalog: ModelCatalog = EMPTY_CATALOG
+  /** 本会话当前路由；null 表示它跟着电脑的全局默认走。 */
+  @State selection: ModelSelection | null = null
+  @State modelLabel: string = '默认模型'
+  @State modelPanel: boolean = false
+  @State switching: boolean = false
   private link: LinkClient | null = null
   private stream: FollowStream | null = null
   private followCancel: StreamCancel | null = null
@@ -158,10 +176,64 @@ struct Chat {
       this.link = link
       this.watch(link)
       this.listenForQuestions(link)
+      this.loadModel(link)
     } catch (error) {
       this.error = describeError(error as Object)
       this.loading = false
     }
+  }
+
+  /**
+   * 读这台电脑能用的模型，以及本会话当前的路由。
+   *
+   * 两件事各自可能失败：清单拿不到只是没得选，路由拿不到只影响标题栏那一行。
+   * 所以都吞掉错误 —— 一个都没读到不该让对话页打不开。
+   */
+  private loadModel(link: LinkClient): void {
+    link.rpc.call('session/modelCatalog', {}, 15000).then((answer: JsonObject) => {
+      this.catalog = readModelCatalog(answer)
+      this.modelLabel = routeLabel(this.catalog, this.selection)
+    }).catch(() => {
+      this.catalog = EMPTY_CATALOG
+    })
+
+    link.rpc.call('session/projections', { request: { sessionId: this.sessionId } }, 15000).then((answer: JsonObject) => {
+      this.selection = readProjectionSelection(answer)
+      this.modelLabel = routeLabel(this.catalog, this.selection)
+    }).catch(() => {
+      this.selection = null
+    })
+  }
+
+  /**
+   * 换本会话的模型。
+   *
+   * 只改这一个会话：全局默认在设置里，手机上改它要另走 `settings/update`。
+   * 成功后用 Host 的回报更新标题栏，而不是用点下去的那个值 —— 电脑可能
+   * 把强度改成了它自己认为合理的默认。
+   */
+  private pickModel(choice: ModelChoice): void {
+    const link = this.link
+    if (link === null || this.switching) return
+    this.switching = true
+    this.error = ''
+    const effort = defaultEffortOf(choice)
+    link.rpc.call('session/selectModel', {
+      request: {
+        sessionId: this.sessionId,
+        provider: choice.provider,
+        model: choice.model,
+        reasoningEffort: effort,
+      },
+    }, 20000).then((answer: JsonObject) => {
+      const selected = readModelSelection(answer)
+      this.selection = selected
+      this.modelLabel = routeLabel(this.catalog, selected)
+      this.modelPanel = false
+    }).catch((error: Object) => {
+      this.error = describeError(error)
+    })
+    this.switching = false
   }
 
   /**
@@ -447,6 +519,69 @@ struct Chat {
     .backgroundColor('#FFF6E5')
   }
 
+  /**
+   * 模型选择面板。
+   *
+   * 一个扁平列表：手机上竖向空间比桌面窗口值钱，分组标题只会把可选模型推得更远。
+   * 当前路由打勾；没读到清单时说清楚是「读不到」而不是「没有模型」。
+   */
+  @Builder
+  private modelPanelView() {
+    Column({ space: 6 }) {
+      Row({ space: 6 }) {
+        Text('本会话使用的模型').fontSize(13).fontColor('#1A1A1A').layoutWeight(1)
+        Button('收起')
+          .fontSize(12)
+          .height(28)
+          .backgroundColor('#EEEEEE')
+          .fontColor('#1A1A1A')
+          .onClick(() => { this.modelPanel = false })
+      }
+      .width('100%')
+      Text('只改这一个会话。电脑上的默认设置不受影响。')
+        .fontSize(11)
+        .fontColor('#888888')
+        .width('100%')
+
+      if (this.catalog.choices.length === 0) {
+        Text('读不到这台电脑的模型清单。').fontSize(12).fontColor('#B3261E')
+      } else {
+        List({ space: 0 }) {
+          ForEach(this.catalog.choices, (choice: ModelChoice) => {
+            ListItem() {
+              Row({ space: 8 }) {
+                Column({ space: 2 }) {
+                  Text(choice.name).fontSize(14).fontColor('#1A1A1A')
+                  Text(`${choice.model} · ${choice.providerName}`)
+                    .fontSize(11)
+                    .fontColor('#888888')
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                if (this.selection !== null && this.selection.provider === choice.provider && this.selection.model === choice.model) {
+                  Text('当前').fontSize(11).fontColor('#0A7A4F')
+                }
+              }
+              .width('100%')
+              .padding({ left: 4, right: 4, top: 8, bottom: 8 })
+            }
+            .onClick(() => { this.pickModel(choice) })
+          }, (choice: ModelChoice) => `${choice.provider}/${choice.model}`)
+        }
+        .height(260)
+        .width('100%')
+        .divider({ strokeWidth: 1, color: '#EEEEEE' })
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .padding(12)
+    .margin({ left: 12, right: 12, bottom: 8 })
+    .width('92%')
+    .borderRadius(10)
+    .backgroundColor('#F2F5F4')
+  }
+
   @Builder
   private transcriptRow(view: RowView) {
     Column({ space: 4 }) {
@@ -478,7 +613,22 @@ struct Chat {
           .onClick(() => { router.back() })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+      .padding({ left: 16, right: 16, top: 12, bottom: 4 })
+
+      Row({ space: 6 }) {
+        Text(this.modelLabel)
+          .fontSize(12)
+          .fontColor('#0A7A4F')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text('切换模型')
+          .fontSize(12)
+          .fontColor('#0A7A4F')
+          .decoration({ type: TextDecorationType.Underline, color: '#0A7A4F' })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: 8 })
+      .onClick(() => { this.modelPanel = !this.modelPanel })
 
       if (this.loading) {
         Row({ space: 8 }) {
@@ -486,6 +636,10 @@ struct Chat {
           Text('正在打开会话…').fontSize(13).fontColor('#666666')
         }
         .padding(16)
+      }
+
+      if (this.modelPanel) {
+        this.modelPanelView()
       }
 
       List({ space: 0 }) {

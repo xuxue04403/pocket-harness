@@ -4,83 +4,11 @@
 // Noise 握手并跑通业务调用，鸿蒙侧的移植才是可信的。
 //
 // 这里刻意走 `LinkClient.connect` 而不是手写 hello/握手：鸿蒙 App 用的就是
-// 那条路径，只有它被真实 Host 验证过，"协议层能跑" 才算数。
+// 那条路径，只有它被真实 Host 验证过，"协议层能跑" 才算数。连接细节在
+// `live_common.ts` 里只有一份，和 `live_transcript` / `live_models` 共用。
 
-import { connect } from 'node:net'
-import { readFileSync, existsSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { randomBytes } from 'node:crypto'
-
-import { decodeBase64Url } from '../src/bytes'
-import { identityFromPrivateKey } from '../src/identity'
-import { decodeTicket } from '../src/pairing'
-import { LinkClient } from '../src/client'
-import { FrameSplitter, frameWithLength } from '../src/framing'
-import type { FrameTransport } from '../src/secure_channel'
+import { connectLive, describeError, type LiveLink } from './live_common'
 import type { JsonObject } from '../src/json'
-
-/** 4 字节大端长度前缀的 TCP 传输，等价于 Dart 的 `FramedSocket`。 */
-function openTcp(host: string, port: number, timeoutMs: number): Promise<FrameTransport> {
-  return new Promise((resolve, reject) => {
-    const socket = connect({ host, port })
-    // 用与鸿蒙侧同一份切帧实现：这里手搓一份的话，测的就不是真正跑的那段代码。
-    const splitter = new FrameSplitter()
-    let frameHandler: (frame: Uint8Array) => void = () => undefined
-    let closeHandler: () => void = () => undefined
-    let closed = false
-
-    socket.setNoDelay(true)
-    socket.setTimeout(timeoutMs, () => socket.destroy(new Error('the socket went quiet')))
-
-    socket.on('data', (chunk: Buffer) => {
-      let frames: Uint8Array[] = []
-      try {
-        frames = splitter.push(new Uint8Array(chunk))
-      } catch (error) {
-        socket.destroy(error instanceof Error ? error : new Error(String(error)))
-        return
-      }
-      for (const frame of frames) frameHandler(frame)
-    })
-    socket.on('close', () => {
-      if (closed) return
-      closed = true
-      closeHandler()
-    })
-    socket.once('error', reject)
-
-    socket.once('connect', () => {
-      // 握手之后链路上会有长时间的静默，所以连接建立后立刻取消这个超时。
-      socket.setTimeout(0)
-      resolve({
-        send(frame) {
-          socket.write(Buffer.from(frameWithLength(frame)))
-        },
-        close() {
-          socket.destroy()
-        },
-        onFrame(handler) {
-          frameHandler = handler
-        },
-        onClose(handler) {
-          closeHandler = handler
-        },
-      })
-    })
-  })
-}
-
-function readText(path: string): string {
-  return readFileSync(path, 'utf8').trim()
-}
-
-// 仓库根目录：这个文件在 packages/dsh_arkts/test，构建产物在 packages/dsh_arkts/build，
-// 两种情况下往上两级都能到根。用绝对路径，避免 npm 在不同工作目录下跑时找不到探针文件。
-function repoRoot(): string {
-  const here = dirname(fileURLToPath(import.meta.url))
-  return resolve(here, '..', '..', '..')
-}
 
 function field(source: JsonObject, name: string): string {
   const value = source[name]
@@ -88,54 +16,39 @@ function field(source: JsonObject, name: string): string {
 }
 
 async function main(): Promise<void> {
-  const root = repoRoot()
-  const ticketPath = join(root, 'probe', '_live-ticket.txt')
-  const identityPath = join(root, 'probe', '_probe-identity.txt')
-  if (!existsSync(ticketPath)) throw new Error(`missing ${ticketPath}; run probe/live-ticket.mjs first`)
-  if (!existsSync(identityPath)) throw new Error(`missing ${identityPath}`)
+  let link: LiveLink | null = null
+  try {
+    link = await connectLive()
 
-  const ticket = decodeTicket(readText(ticketPath))
-  const [deviceId, privateKeyText] = readText(identityPath).split(/\r?\n/)
-  const identity = identityFromPrivateKey(deviceId.trim(), decodeBase64Url(privateKeyText.trim()))
-  console.log(
-    `ticket -> ${ticket.hostName} (${ticket.hostDeviceId.slice(0, 8)}…), endpoints ${ticket.lanEndpoints.join(', ')}`,
-  )
+    const list = await link.rpc.call('session/list', { _request: {} }, 20_000)
+    const items = Array.isArray(list['items']) ? (list['items'] as Object[]) : []
+    console.log(`session/list -> ${items.length} sessions`)
+    if (items.length === 0) throw new Error('the Host answered with no sessions; is this the right profile?')
 
-  const link = await LinkClient.connect({
-    ticket,
-    identity,
-    random: (length) => new Uint8Array(randomBytes(length)),
-    openTransport: (host, port) => openTcp(host, port, 15_000),
-    timeoutMs: 15_000,
-    // 探针跑几秒就结束，心跳只会多几条无关的日志。
-    heartbeat: false,
-  })
-  console.log(`noise handshake complete over ${link.route} (${link.endpoint})`)
+    const first = items[0] as JsonObject
+    const sessionId = field(first, 'sessionId')
+    console.log(`first session ${sessionId.slice(0, 8)}… updated ${String(first['updatedAt'])}`)
 
-  const list = await link.rpc.call('session/list', { _request: {} })
-  const items = Array.isArray(list.items) ? (list.items as Object[]) : []
-  console.log(`session/list -> ${items.length} sessions`)
-  if (items.length === 0) throw new Error('the Host answered with no sessions; is this the right profile?')
+    // 流式端点也验一次：job/list 首帧即整集，流不会自己结束，所以读到第一帧就退。
+    for await (const frame of link.rpc.openStream('job/list', { request: { sessionId } }, { timeoutMs: 20_000 })) {
+      const jobs = Array.isArray(frame['jobs']) ? (frame['jobs'] as Object[]) : []
+      console.log(`job/list -> ${jobs.length} jobs (stream opened and read)`)
+      break
+    }
 
-  const first = items[0] as JsonObject
-  const sessionId = field(first, 'sessionId')
-  console.log(`first session ${sessionId.slice(0, 8)}… updated ${String(first.updatedAt)}`)
-
-  // 流式端点也验一次：job/list 首帧即整集，流不会自己结束，所以读到第一帧就退。
-  for await (const frame of link.rpc.openStream('job/list', { request: { sessionId } }, { timeoutMs: 20_000 })) {
-    const jobs = Array.isArray(frame.jobs) ? (frame.jobs as Object[]) : []
-    console.log(`job/list -> ${jobs.length} jobs (stream opened and read)`)
-    break
+    console.log('\nTYPESCRIPT CLIENT TALKS TO THE REAL HOST')
+  } catch (error) {
+    console.log(`FAILED: ${describeError(error as Object)}`)
+    process.exitCode = 1
+  } finally {
+    if (link !== null) await link.close()
   }
-
-  link.close()
-  console.log('\nTYPESCRIPT CLIENT TALKS TO THE REAL HOST')
 }
 
 main().then(
-  () => process.exit(0),
-  (error) => {
-    console.error(`FAILED: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
+  () => process.exit(process.exitCode ?? 0),
+  (error: Object) => {
+    console.error(`FAILED: ${describeError(error)}`)
     process.exit(1)
   },
 )
