@@ -52,3 +52,4 @@ probe/_live-ticket*.txt
 probe/_*.out
 probe/_*.err
 probe/_ui*.xml
+probe/_msg.txt
