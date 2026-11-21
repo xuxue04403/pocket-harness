@@ -89,7 +89,13 @@ class _SessionsPageState extends State<SessionsPage> {
   }
 
   Future<void> _refresh() async {
-    setState(() => _sessions = _load());
+    // setState's callback must be synchronous: handing it the future itself
+    // trips the framework's own assertion and leaves the list stale.
+    final pending = _load();
+    setState(() {
+      _sessions = pending;
+    });
+    await pending;
   }
 
   Future<void> _create() async {

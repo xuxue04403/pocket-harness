@@ -99,6 +99,62 @@ List<SessionSummary> filterSessions(List<SessionSummary> sessions, String query)
       .toList();
 }
 
+/// One skill the session can invoke as `/name`.
+///
+/// The catalog is session-addressed: the Host resolves it from the session's
+/// working directory and agent preset, so the same phone shows different skills
+/// in different sessions, and the list is exactly what the model would see.
+class SkillEntry {
+  const SkillEntry({
+    required this.name,
+    required this.description,
+    this.whenToUse,
+    this.path,
+    this.modelInvocable = false,
+  });
+
+  /// Kebab-case identifier, invoked as `/name`.
+  final String name;
+  final String description;
+  final String? whenToUse;
+
+  /// Absolute SKILL.md path when a filesystem provider supplies one.
+  final String? path;
+
+  /// Whether the model can also reach this skill on its own.
+  final bool modelInvocable;
+
+  static SkillEntry? fromJson(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    final name = value['name'];
+    if (name is! String || name.isEmpty) return null;
+    final description = value['description'];
+    final whenToUse = value['whenToUse'];
+    final path = value['path'];
+    return SkillEntry(
+      name: name,
+      description: description is String ? description : '',
+      whenToUse: whenToUse is String && whenToUse.isNotEmpty ? whenToUse : null,
+      path: path is String && path.isNotEmpty ? path : null,
+      modelInvocable: value['modelInvocable'] == true,
+    );
+  }
+}
+
+/// Filters skills by name, description, or when-to-use guidance.
+List<SkillEntry> filterSkills(List<SkillEntry> skills, String query) {
+  final needle = query.trim().toLowerCase();
+  if (needle.isEmpty) return skills;
+  return skills
+      .where(
+        (skill) =>
+            skill.name.toLowerCase().contains(needle) ||
+            skill.description.toLowerCase().contains(needle) ||
+            (skill.whenToUse?.toLowerCase().contains(needle) ?? false),
+      )
+      .toList();
+}
+
 /// One session whose message content matched a search.
 class SessionHit {
   const SessionHit({required this.sessionId, required this.snippet});
@@ -554,6 +610,24 @@ class HostLink {
       'request': {'query': query},
     });
     return SessionSearchResult.fromJson(value);
+  }
+
+  /// Lists the skills this session can invoke.
+  ///
+  /// The namespace is `skills`, not `session/skills`: the Host mounts a separate
+  /// session-addressed catalog service for it.
+  Future<List<SkillEntry>> skills(String sessionId) async {
+    final value = await _client.rpc.call('skills/list', {
+      'request': {'sessionId': sessionId},
+    });
+    final entries = value['skills'];
+    if (entries is! List) return const [];
+    final skills = <SkillEntry>[];
+    for (final entry in entries) {
+      final skill = SkillEntry.fromJson(entry);
+      if (skill != null) skills.add(skill);
+    }
+    return skills;
   }
 
   /// Follows one session, yielding the opening snapshot and then live frames.

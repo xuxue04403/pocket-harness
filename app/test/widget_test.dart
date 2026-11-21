@@ -2,6 +2,7 @@ import 'package:dsh_link/dsh_link.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pocket_harness/src/dsh/host_link.dart';
 import 'package:pocket_harness/src/dsh/questions.dart';
+import 'package:pocket_harness/src/dsh/tool_labels.dart';
 
 /// Transcript rendering is the one piece of the phone UI with real logic, and
 /// it runs against records captured from a real Host, so it is tested here
@@ -390,6 +391,39 @@ void _questionTests() {
     });
   });
 
+  group('tool labels', () {
+    test('names a shell call by its verb and its command', () {
+      expect(toolVerb('pwsh'), '运行命令');
+      expect(toolSubject('{"command":"Get-ChildItem src"}'), 'Get-ChildItem src');
+    });
+
+    test('falls back to the tool name for an unknown tool', () {
+      expect(toolVerb('frobnicate_things'), 'frobnicate things');
+      expect(toolVerb('server__read'), '读取');
+      expect(toolVerb('  '), '工具');
+    });
+
+    test('reads a file path and a search pattern as subjects', () {
+      expect(toolSubject(r'{"file_path":"D:\\IDE\\dsh-bot\\README.md"}'), r'D:\IDE\dsh-bot\README.md');
+      expect(toolSubject('{"pattern":"FutureBuilder","path":"lib"}'), 'FutureBuilder');
+    });
+
+    test('returns no subject when the arguments carry none', () {
+      expect(toolSubject('{"odd":1}'), '');
+      expect(toolSubject('not json'), 'not json');
+    });
+
+    test('pretty-prints arguments and leaves junk alone', () {
+      expect(prettyJson('{"a":1}'), contains('"a": 1'));
+      expect(prettyJson('plain text'), 'plain text');
+    });
+
+    test('flattens multi-line output into one preview line', () {
+      expect(collapse('a\n\nb   c'), 'a b c');
+      expect(summarizeBody('one\ntwo'), endsWith('2 行'));
+    });
+  });
+
   group('session search', () {
     test('reads hits and the truncation flag', () {
       final result = SessionSearchResult.fromJson({
@@ -446,6 +480,52 @@ void _questionTests() {
 
     test('tolerates a session with no directory', () {
       expect(filterSessions(sessions, 'librextv').single.cwd, isNull);
+    });
+  });
+
+  group('skills', () {
+    const skills = [
+      SkillEntry(
+        name: 'brainstorming',
+        description: 'You MUST use this before any creative work.',
+        modelInvocable: true,
+      ),
+      SkillEntry(
+        name: 'canvas',
+        description: 'A live React app opened beside the chat.',
+        whenToUse: 'When the response benefits from visual layout',
+        modelInvocable: false,
+      ),
+      SkillEntry(name: 'create-rule', description: 'Create Codex rules.'),
+    ];
+
+    test('filters by name, description, and when-to-use', () {
+      expect(filterSkills(skills, 'canvas').map((s) => s.name), ['canvas']);
+      expect(filterSkills(skills, 'CREATIVE').map((s) => s.name), ['brainstorming']);
+      expect(filterSkills(skills, 'visual layout').map((s) => s.name), ['canvas']);
+    });
+
+    test('keeps every skill for an empty filter', () {
+      expect(filterSkills(skills, '  '), hasLength(3));
+    });
+
+    test('reads a skill and its optional fields', () {
+      final skill = SkillEntry.fromJson({
+        'name': 'lean',
+        'description': '精简工具集',
+        'whenToUse': '编码时',
+        'path': r'C:\skills\lean\SKILL.md',
+        'modelInvocable': true,
+      });
+      expect(skill?.name, 'lean');
+      expect(skill?.whenToUse, '编码时');
+      expect(skill?.path, r'C:\skills\lean\SKILL.md');
+      expect(skill?.modelInvocable, isTrue);
+    });
+
+    test('drops entries without a name', () {
+      expect(SkillEntry.fromJson({'description': 'nameless'}), isNull);
+      expect(SkillEntry.fromJson('canvas'), isNull);
     });
   });
 }

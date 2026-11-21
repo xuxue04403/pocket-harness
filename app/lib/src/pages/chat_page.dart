@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:material_ui/material_ui.dart';
 
 import '../dsh/host_link.dart';
 import '../dsh/questions.dart';
+import '../dsh/tool_labels.dart';
 import 'model_sheet.dart';
+import 'skill_sheet.dart';
 
 /// One conversation: opening snapshot, live events, and the composer.
 ///
@@ -58,12 +59,32 @@ class _ChatPageState extends State<ChatPage> {
   ModelSelection? _selection;
   bool _loadingSelection = true;
 
+  /// When the running turn started, so the page can count up like the desktop.
+  ///
+  /// The desktop prints `深度求索中，用时 2分13秒` under a running turn; keeping the
+  /// same line here is what tells a person the phone is still connected and the
+  /// computer is still working, rather than stalled.
+  DateTime? _turnStarted;
+  Timer? _ticker;
+
   @override
   void initState() {
     super.initState();
     _start();
     _listenForQuestions();
     unawaited(_loadSelection());
+  }
+
+  /// Starts or stops the one-second clock that drives the running-turn footer.
+  void _syncTicker() {
+    if (_turnStarted == null) {
+      _ticker?.cancel();
+      _ticker = null;
+      return;
+    }
+    _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _loadSelection() async {
@@ -200,9 +221,17 @@ class _ChatPageState extends State<ChatPage> {
           _rows.add(row);
           _rows.sort((left, right) => left.seq.compareTo(right.seq));
         }
+        if (eventType == 'turn/start') {
+          _turnStarted = DateTime.now();
+          _syncTicker();
+        }
         // The durable message supersedes whatever the live draft accumulated,
         // so the two never show the same text twice.
         if (eventType == 'assistant/message' || eventType == 'turn/end') _draft = null;
+        if (eventType == 'turn/end') {
+          _turnStarted = null;
+          _syncTicker();
+        }
       });
       _scrollToEnd();
       return;
@@ -213,6 +242,8 @@ class _ChatPageState extends State<ChatPage> {
       switch (live.kind) {
         case 'start':
           _draft = LiveDraft(attemptId: live.attemptId);
+          _turnStarted ??= DateTime.now();
+          _syncTicker();
         case 'chunk':
           final draft = _draft;
           if (draft == null || draft.attemptId != live.attemptId) {
@@ -272,8 +303,21 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  Future<void> _cancel() async {
-    final messenger = ScaffoldMessenger.of(context);
+  /// Inserts `/name` for the chosen skill, matching what the desktop composer
+  /// accepts, and leaves the cursor after it so a message can follow.
+  Future<void> _insertSkill() async {
+    final skill = await showSkillSheet(
+      context,
+      skills: widget.link.skills(widget.sessionId),
+    );
+    if (skill == null || !mounted) return;
+    final existing = _composer.text;
+    final prefix = existing.isEmpty || existing.endsWith(' ') || existing.endsWith('\n') ? existing : '$existing ';
+    _composer.text = '$prefix/${skill.name} ';
+    _composer.selection = TextSelection.collapsed(offset: _composer.text.length);
+  }
+
+  Future<void> _cancel() async {    final messenger = ScaffoldMessenger.of(context);
     try {
       await widget.link.cancel(widget.sessionId);
     } on Object catch (error) {
@@ -283,6 +327,7 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    _ticker?.cancel();
     unawaited(_questionStream?.cancel());
     unawaited(_follow?.cancel());
     _composer.dispose();
@@ -312,11 +357,14 @@ class _ChatPageState extends State<ChatPage> {
             icon: const Icon(Icons.tune),
             tooltip: '选择模型',
           ),
-          IconButton(
-            onPressed: _cancel,
-            icon: const Icon(Icons.stop_circle_outlined),
-            tooltip: '中止本轮',
-          ),
+          // Only while a turn is actually running: an always-visible stop button
+          // on an idle conversation is a button that does nothing.
+          if (_turnStarted != null)
+            IconButton(
+              onPressed: _cancel,
+              icon: const Icon(Icons.stop_circle_outlined),
+              tooltip: '中止本轮',
+            ),
         ],
       ),
       body: Column(
@@ -338,6 +386,7 @@ class _ChatPageState extends State<ChatPage> {
             sending: _sending,
             onSend: () => _send(),
             onSteer: () => _send(mode: 'steer'),
+            onSkill: _insertSkill,
           ),
         ],
       ),
@@ -348,20 +397,22 @@ class _ChatPageState extends State<ChatPage> {
     if (_loading) return const Center(child: CircularProgressIndicator());
     final draft = _draft;
     final showDraft = draft != null && !draft.isEmpty;
-    if (_rows.isEmpty && !showDraft) return const _EmptyTranscript();
-    final count = _rows.length + (showDraft ? 1 : 0);
+    final running = _turnStarted;
+    if (_rows.isEmpty && !showDraft && running == null) return const _EmptyTranscript();
+    final count = _rows.length + (showDraft ? 1 : 0) + (running != null ? 1 : 0);
     return ListView.builder(
       controller: _scroll,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       itemCount: count,
       itemBuilder: (context, index) {
-        if (index >= _rows.length) {
-          return _LiveTile(draft: draft!);
+        if (index < _rows.length) {
+          return _TranscriptTile(
+            row: _rows[index],
+            onLoadOlder: index == 0 ? _loadOlder : null,
+          );
         }
-        return _TranscriptTile(
-          row: _rows[index],
-          onLoadOlder: index == 0 ? _loadOlder : null,
-        );
+        if (showDraft && index == _rows.length) return _LiveTile(draft: draft);
+        return _RunningFooter(started: running!, onStop: _cancel);
       },
     );
   }
@@ -413,6 +464,10 @@ class _AppBarModelLine extends StatelessWidget {
 }
 
 /// The in-flight assistant attempt, rendered from stream chunks.
+///
+/// This is the row that makes the phone feel alive: text appears as DSH emits
+/// it, the thinking block stays open while it grows, and a blinking caret marks
+/// where the next token will land.
 class _LiveTile extends StatelessWidget {
   const _LiveTile({required this.draft});
 
@@ -425,39 +480,37 @@ class _LiveTile extends StatelessWidget {
     final text = draft.text.toString();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: _Bubble(
-        alignEnd: false,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (reasoning.isNotEmpty) _Reasoning(text: reasoning, live: true),
-            if (text.isNotEmpty) Text(text, style: theme.textTheme.bodyMedium),
-            if (text.isEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: theme.colorScheme.outline,
-                      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (reasoning.isNotEmpty) _Reasoning(text: reasoning, live: true),
+          // Plain text rather than a selectable span: the draft is transient, and
+          // a selectable node is invisible to screen readers and to the
+          // accessibility tree the UI tests read.
+          if (text.isNotEmpty) Text('$text▍', style: theme.textTheme.bodyMedium),
+          if (text.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: theme.colorScheme.outline,
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      reasoning.isEmpty ? '运行中' : '思考中',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.outline,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    reasoning.isEmpty ? '等待首字…' : '思考中…',
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+                  ),
+                ],
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
@@ -478,25 +531,30 @@ class _TranscriptTile extends StatelessWidget {
         muted: injected,
         child: Text(text, style: theme.textTheme.bodyMedium),
       ),
-      AssistantRow(:final text, :final reasoning) => _Bubble(
-        alignEnd: false,
+      AssistantRow(:final text, :final reasoning) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (reasoning != null) _Reasoning(text: reasoning),
-            SelectableText(text, style: theme.textTheme.bodyMedium),
+            if (text.isNotEmpty) SelectableText(text, style: theme.textTheme.bodyMedium),
           ],
         ),
       ),
       ToolCallRow(:final name, :final arguments) => _ToolCard(
-        title: name,
-        body: _prettyJson(arguments),
-        tone: theme.colorScheme.secondaryContainer,
+        icon: Icons.terminal,
+        title: toolVerb(name),
+        subject: toolSubject(arguments),
+        body: prettyJson(arguments),
+        bodyLabel: '参数',
       ),
       ToolResultRow(:final text, :final isError) => _ToolCard(
-        title: isError ? '工具执行失败' : '工具结果',
+        icon: isError ? Icons.error_outline : Icons.check_circle_outline,
+        title: isError ? '工具失败' : '工具结果',
+        subject: summarizeBody(text),
         body: text,
-        tone: isError ? theme.colorScheme.errorContainer : theme.colorScheme.surfaceContainerHighest,
+        bodyLabel: '输出',
+        isError: isError,
       ),
       NoticeRow(:final text, :final isError) => Row(
         children: [
@@ -529,6 +587,47 @@ class _TranscriptTile extends StatelessWidget {
           ),
         Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: child),
       ],
+    );
+  }
+}
+
+/// The footer under a running turn: `深度求索中，用时 2分13秒`, plus a stop button.
+///
+/// The desktop prints the same line while a turn is in flight, and it is the
+/// only signal that separates "the computer is thinking hard" from "the phone
+/// lost the link" — the clock moving is the proof.
+class _RunningFooter extends StatelessWidget {
+  const _RunningFooter({required this.started, required this.onStop});
+
+  final DateTime started;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final elapsed = DateTime.now().difference(started);
+    final minutes = elapsed.inMinutes;
+    final seconds = elapsed.inSeconds.remainder(60);
+    final label = minutes > 0 ? '深度求索中，用时 $minutes分$seconds秒' : '深度求索中，用时 $seconds秒';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 6, 4, 10),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(strokeWidth: 2, color: theme.colorScheme.outline),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+            ),
+          ),
+          TextButton(onPressed: onStop, child: const Text('停止')),
+        ],
+      ),
     );
   }
 }
@@ -593,7 +692,7 @@ class _ReasoningState extends State<_Reasoning> {
           InkWell(
             onTap: () => setState(() => _open = !_open),
             child: Row(
-              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(
                   _open ? Icons.expand_less : Icons.expand_more,
@@ -601,17 +700,23 @@ class _ReasoningState extends State<_Reasoning> {
                   color: theme.colorScheme.outline,
                 ),
                 const SizedBox(width: 4),
-                Text(
-                  '思考过程',
-                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.outline),
+                Icon(Icons.psychology_outlined, size: 14, color: theme.colorScheme.outline),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    _open ? '思考' : '思考 · ${firstLine(widget.text, limit: 46)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.outline),
+                  ),
                 ),
               ],
             ),
           ),
           if (_open)
             Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
+              padding: const EdgeInsets.only(top: 4, left: 20),
+              child: SelectableText(
                 widget.text,
                 style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
               ),
@@ -622,32 +727,107 @@ class _ReasoningState extends State<_Reasoning> {
   }
 }
 
-class _ToolCard extends StatelessWidget {
-  const _ToolCard({required this.title, required this.body, required this.tone});
+/// A tool call or a tool result, in the shape the desktop uses: one line naming
+/// the verb and what it acted on, with the details folded away behind it.
+class _ToolCard extends StatefulWidget {
+  const _ToolCard({
+    required this.icon,
+    required this.title,
+    required this.body,
+    required this.bodyLabel,
+    this.subject = '',
+    this.isError = false,
+  });
 
+  final IconData icon;
   final String title;
+  final String subject;
   final String body;
-  final Color tone;
+  final String bodyLabel;
+  final bool isError;
+
+  @override
+  State<_ToolCard> createState() => _ToolCardState();
+}
+
+class _ToolCardState extends State<_ToolCard> {
+  bool _open = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final border = widget.isError ? theme.colorScheme.error : theme.colorScheme.outlineVariant;
+    final foreground = widget.isError ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(color: tone, borderRadius: BorderRadius.circular(10)),
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      decoration: BoxDecoration(
+        border: Border(left: BorderSide(color: border, width: 2.5)),
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: const BorderRadius.only(
+          topRight: Radius.circular(8),
+          bottomRight: Radius.circular(8),
+        ),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: theme.textTheme.labelMedium),
-          if (body.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              body,
-              maxLines: 8,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall,
+          InkWell(
+            onTap: widget.body.isEmpty ? null : () => setState(() => _open = !_open),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+              child: Row(
+                children: [
+                  Icon(widget.icon, size: 15, color: foreground),
+                  const SizedBox(width: 6),
+                  Text(
+                    widget.title,
+                    style: theme.textTheme.labelMedium?.copyWith(color: foreground),
+                  ),
+                  if (widget.subject.isNotEmpty) ...[
+                    Text(
+                      ' · ',
+                      style: theme.textTheme.labelMedium?.copyWith(color: foreground),
+                    ),
+                    Expanded(
+                      child: Text(
+                        widget.subject,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ] else
+                    const Spacer(),
+                  if (widget.body.isNotEmpty)
+                    Icon(
+                      _open ? Icons.expand_less : Icons.expand_more,
+                      size: 16,
+                      color: theme.colorScheme.outline,
+                    ),
+                ],
+              ),
             ),
-          ],
+          ),
+          if (_open)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.bodyLabel,
+                    style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.outline),
+                  ),
+                  const SizedBox(height: 2),
+                  SelectableText(
+                    widget.body,
+                    style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -660,12 +840,14 @@ class _Composer extends StatelessWidget {
     required this.sending,
     required this.onSend,
     required this.onSteer,
+    required this.onSkill,
   });
 
   final TextEditingController controller;
   final bool sending;
   final VoidCallback onSend;
   final VoidCallback onSteer;
+  final VoidCallback onSkill;
 
   @override
   Widget build(BuildContext context) {
@@ -696,6 +878,11 @@ class _Composer extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
+            IconButton(
+              onPressed: onSkill,
+              icon: const Icon(Icons.auto_awesome_outlined),
+              tooltip: '插入技能',
+            ),
             if (sending)
               const Padding(
                 padding: EdgeInsets.all(12),
@@ -764,17 +951,6 @@ class _EmptyTranscript extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-/// Renders tool arguments, which DSH stores as a raw JSON string.
-String _prettyJson(String raw) {
-  if (raw.isEmpty) return '';
-  try {
-    final decoded = jsonDecode(raw);
-    return const JsonEncoder.withIndent('  ').convert(decoded);
-  } on FormatException {
-    return raw;
   }
 }
 

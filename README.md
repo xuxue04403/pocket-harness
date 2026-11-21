@@ -92,7 +92,7 @@ node run.mjs          # 监听 8080，/healthz 可探活
 ## 开发
 
 ```powershell
-# Dart 协议层：42 个测试
+# Dart 协议层：43 个测试
 cd packages\dsh_link; dart analyze; dart test
 
 # Host 插件与中继：12 个测试
