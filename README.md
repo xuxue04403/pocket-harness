@@ -39,7 +39,7 @@
 | 浏览工作区文件 | ✅ 按目录翻、按名字搜、按行读文本，只读 |
 | 后台任务 | ✅ 看会话跑的每条命令、跟随实时输出、可远程终止 |
 | Android | ✅ 模拟器与构建均通过 |
-| HarmonyOS 7.0 | ⏳ 二期，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
+| HarmonyOS 7.0 | 🟡 ArkTS 宿主已在 Windows 上真编译出 HAP；Dart AOT 需 macOS arm64，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
 | WebRTC P2P / TURN | ⏳ 二期（局域网直连 + 中继已覆盖当前场景） |
 
 ## 仓库结构
@@ -48,6 +48,7 @@
 |---|---|
 | [`app/`](app) | Flutter 客户端（Android 已通；鸿蒙共用同一套 Dart） |
 | [`packages/dsh_link/`](packages/dsh_link) | 纯 Dart 协议核心：Noise IK、分片、信封、RPC、双传输 |
+| [`tools/ohos-probe/`](tools/ohos-probe) | 最小鸿蒙 ArkTS 宿主工程，Windows 上可产出未签名 HAP |
 | [`host/`](host) | DSH Host 插件，零运行时依赖的 ESM |
 | [`relay/`](relay) | 极简中继，只做房间配对与密文转发 |
 | [`docs/`](docs) | 设计文档与打包说明 |
