@@ -17,6 +17,12 @@ import type { JsonObject } from './json'
 export const DEFAULT_STREAM_OPEN_ENDPOINT = 'link/stream.open'
 export const DEFAULT_STREAM_CLOSE_ENDPOINT = 'link/stream.close'
 
+/** 空闲多久发一次 ping。中继与 NAT 的静默超时都远大于这个值。 */
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 25_000
+
+/** ping 多久没回音就判定链路已死。 */
+export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 10_000
+
 /** Host 返回的错误。 */
 export class RpcError extends Error {
   readonly code: string
@@ -49,25 +55,76 @@ interface PendingStream {
 export interface RpcClientOptions {
   readonly channel: SecureChannel
   readonly defaultTimeoutMs?: number
+  /** 链路死掉时通知调用方（心跳超时会走这里）。 */
+  readonly onFailure?: (error: Error) => void
 }
 
 /** 一条 RPC 客户端。 */
 export class RpcClient {
   private readonly channel: SecureChannel
   private readonly defaultTimeoutMs: number
+  private readonly onFailure?: (error: Error) => void
   private readonly calls = new Map<string, PendingCall>()
   private readonly opening = new Map<string, PendingStream>()
   private readonly streams = new Map<number, PendingStream>()
   private nextCallId = 1
   private closed = false
+  private lastFrameAt = 0
+  private heartbeat: ReturnType<typeof setInterval> | null = null
+  private pinging = false
 
   constructor(options: RpcClientOptions) {
     this.channel = options.channel
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000
+    this.onFailure = options.onFailure
   }
 
   get openStreams(): number {
     return this.streams.size
+  }
+
+  /**
+   * 开始给空闲链路发心跳。
+   *
+   * 手机把会话开在后台、屏幕锁上、或者夹在 NAT 后面时，路由会被静默丢掉，
+   * 而 socket 本身不会报错 —— 只有主动 ping 才能发现。命令行探针不需要这个，
+   * 所以它是显式开启的。重复调用是 no-op。
+   */
+  startHeartbeat(
+    intervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
+    timeoutMs = DEFAULT_HEARTBEAT_TIMEOUT_MS,
+  ): void {
+    if (this.heartbeat !== null || this.closed) return
+    this.lastFrameAt = Date.now()
+    this.heartbeat = setInterval(() => {
+      if (this.closed || this.pinging) return
+      // 有别的流量就说明链路是通的，没必要再补一枪。
+      if (Date.now() - this.lastFrameAt < intervalMs) return
+      this.pinging = true
+      const sentAt = Date.now()
+      try {
+        // 心跳不是业务 RPC：Host 对 `ping` 信封直接回 `pong`，不进网关。
+        this.channel.send(encodeEnvelope({ type: 'ping', payload: { at: sentAt } }))
+      } catch {
+        this.pinging = false
+        return
+      }
+      setTimeout(() => {
+        if (this.closed || !this.pinging) return
+        this.pinging = false
+        if (this.lastFrameAt > sentAt) return
+        // 连接还在，但它已经不说话了：按死亡处理，免得 UI 一直转圈。
+        this.fail(new Error('the link stopped answering'))
+      }, timeoutMs)
+    }, intervalMs)
+  }
+
+  /** 停掉心跳（关闭链路时自动调用）。 */
+  stopHeartbeat(): void {
+    if (this.heartbeat !== null) {
+      clearInterval(this.heartbeat)
+      this.heartbeat = null
+    }
   }
 
   /** 发一条 unary 请求并等响应。 */
@@ -177,6 +234,9 @@ export class RpcClient {
 
   /** 把从通道收到的字节喂进来。 */
   accept(bytes: Uint8Array): void {
+    // 任何入站流量都证明链路活着，不只是我们自己发的 ping 的回应。
+    this.lastFrameAt = Date.now()
+    this.pinging = false
     let envelope: Envelope
     try {
       envelope = decodeEnvelope(bytes)
@@ -189,6 +249,7 @@ export class RpcClient {
   close(): void {
     if (this.closed) return
     this.closed = true
+    this.stopHeartbeat()
     const failure = new Error('the RPC client closed')
     for (const pending of this.calls.values()) {
       if (pending.timer !== undefined) clearTimeout(pending.timer)
@@ -200,6 +261,24 @@ export class RpcClient {
     }
     this.opening.clear()
     this.streams.clear()
+  }
+
+  /** 链路已经不可用：让所有等待中的调用与流一起失败。 */
+  private fail(error: Error): void {
+    if (this.closed) return
+    this.closed = true
+    this.stopHeartbeat()
+    for (const pending of this.calls.values()) {
+      if (pending.timer !== undefined) clearTimeout(pending.timer)
+      pending.reject(error)
+    }
+    this.calls.clear()
+    for (const stream of [...this.opening.values(), ...this.streams.values()]) {
+      stream.fail(error)
+    }
+    this.opening.clear()
+    this.streams.clear()
+    this.onFailure?.(error)
   }
 
   private dispatch(envelope: Envelope): void {

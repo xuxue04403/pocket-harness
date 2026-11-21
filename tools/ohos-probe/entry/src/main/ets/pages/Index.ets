@@ -9,6 +9,7 @@ import { encodeBase64Url, fromUtf8, utf8 } from '../core/bytes'
 import { x25519PublicKey } from '../core/curve25519'
 import { NoiseIkSession, createNoisePrologue } from '../core/noise'
 import { decodeTicket, encodeTicket } from '../core/pairing'
+import { ClientCheckResult, runClientCheck } from '../selfcheck'
 
 function hex(bytes: Uint8Array): string {
   let out = ''
@@ -45,10 +46,25 @@ struct Index {
       Button('跑一次 Noise IK 握手')
         .width('80%')
         .onClick(() => { this.runOnce() })
+      Button('跑一次完整客户端链路')
+        .width('80%')
+        .onClick(() => { this.runClient() })
     }
     .padding(20)
     .width('100%')
     .height('100%')
+  }
+
+  private runClient(): void {
+    this.summary = '正在跑客户端链路…'
+    this.detail = ''
+    runClientCheck().then((result: ClientCheckResult) => {
+      this.summary = result.summary
+      this.detail = result.detail
+    }).catch((error: Object) => {
+      this.summary = '客户端链路自检失败'
+      this.detail = '' + error
+    })
   }
 
   private runOnce(): void {
