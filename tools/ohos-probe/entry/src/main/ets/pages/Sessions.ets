@@ -234,6 +234,13 @@ struct Sessions {
           .fontSize(13)
           .fontColor('#1F6F5C')
           .onClick(() => { this.openNewPanel() })
+
+        Text('电脑设置')
+          .fontSize(13)
+          .fontColor('#1F6F5C')
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/Settings', params: { ticketText: this.ticketText } })
+          })
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })

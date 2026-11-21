@@ -31,10 +31,11 @@
 | `src/models.ts` | 模型清单与当前路由：把 provider 分组摊平，两种路由形状都认 |
 | `src/agent_presets.ts` | 智能体预设与新建会话的参数：「跟随电脑」与「显式选默认预设」要能区分 |
 | `src/skills.ts` | 会话可用的技能清单与 `/name` 插入文本 |
+| `src/settings.ts` | 电脑的全局设置：revision 校验、打码密钥、写回后的新 revision |
 
 ## 为什么能信
 
-`npm test` 跑十二套断言：
+`npm test` 跑十三套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -74,8 +75,11 @@
 12. **`test/skills.ts`** —— 技能清单与插入：坏条目跳过、**空查询返回全部**（与会话
     过滤相反）、名称/说明/用途三处都能筛、`/name ` 的拼接在空草稿与非空草稿下
     都带正确的分隔符、连续插两条不会粘成 `/a/b`。
+13. **`test/settings.ts`** —— 全局设置：坏命名空间跳过而不清空整页、`expectedRevision`
+    必须来自刚读到的那一份、被打码的密钥显示成「已隐藏」而不是「空」、写回时沿用
+    回答里的新 revision、**写同值不递增 revision**、冲突文案能直接照着做。
 
-`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做六件事：
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做七件事：
 
 1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
    数学正确，而是「这份代码能跟真正的 Host 说话」。
@@ -95,6 +99,10 @@
    与 `test/client.ts` 的假 Host 覆盖。
 6. 读 `skills/list`（要带一个真实 `sessionId`，清单是按会话算的），要求至少一条、
    每条有名字、调用名是不带空格的小写 token。不插入也不发送。
+7. 读 `settings/describe`（本机 24 个命名空间），把 `agent-default-model` **写回原值**：
+   这既验证了 `settings/update` 的请求形状（含 `expectedRevision`），又因为「写同值不
+   递增 revision」而不在这台电脑上留下任何改动。随后用一个过期的 revision 确认会被
+   拒绝，而不是悄悄覆盖电脑上的值。
 
 ## 在鸿蒙工程里怎么用
 

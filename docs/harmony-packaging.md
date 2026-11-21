@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（606 KB，内含 `ets/modules.abc` 353,620 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（679 KB，内含 `ets/modules.abc` 408,684 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -231,6 +231,27 @@ cordis, lean`），同样**不真的新建会话**——那会在电脑上留下
 
 `test/live_skills.ts` 用真实 Host 校验清单（要求至少一条、每条有名字、调用名是
 不带空格的小写 token），同样不插入也不发送。
+
+### 电脑的全局设置也在手机上
+
+会话列表右上角「电脑设置」进 `pages/Settings.ets`：`settings/describe` 一次回 24 个
+命名空间，页面把它们列成只读摘要（每个挑两个一眼能懂的键，含密钥的标「含密钥」并
+显示成「已隐藏」而不是空框），只有全局默认模型可改 —— 复用对话页那个模型选择器。
+
+数据侧在 `src/settings.ts`，`test/settings.ts` 钉形状，`test/live_settings.ts` 打真
+Host。三条规矩值得单独记：
+
+- **写必须带 `expectedRevision`**（来自刚读到的那一份）。不带就是「最后写入者赢」，
+  会把电脑上刚改过的值无声覆盖；带了不匹配就得到冲突，这比覆盖好。冲突时界面
+  **不自动重试** —— 那等于替人决定要覆盖电脑上的改动。
+- **`secrets` 里的字段是被打码的**。显示为空不是「没设置」，是「在电脑上设过但这里
+  看不到」，所以摘要要写成「含电脑上保存的密钥，已隐藏」。
+- **写同一个值不会递增 `revision`**（实测）。回归脚本正是靠这一点：`test/live_settings.ts`
+  把 `agent-default-model` 写回原值，既验证了请求形状，又不在那台电脑上留下改动。
+
+顺带一个只有真链路会暴露的细节：冲突错误的文本在不同构建里长得不一样 —— 有时是
+`settings/conflict …`，有时只有一句 `settings namespace "x" changed since it was read`，
+所以 `describeSettingsError` 两种都要认（第一版只认前者，真 Host 上直接没翻成中文）。
 
 ## 二期路线建议
 
