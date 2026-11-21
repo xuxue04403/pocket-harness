@@ -41,7 +41,7 @@
 | 待办面板 | ✅ 贴在对话上方，显示完成进度与当前项，可折叠 |
 | 会话分支 | ✅ 从当前会话分出一个副本，两边并行不互相影响 |
 | Android | ✅ 模拟器与构建均通过 |
-| HarmonyOS 7.0 | 🟡 ArkTS 宿主已在 Windows 上真编译出 HAP；Dart AOT 需 macOS arm64，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
+| HarmonyOS 7.0 | 🟡 ArkTS 宿主已在 Windows 上真编译出 HAP；协议核心另有 [TypeScript 版](packages/dsh_arkts)，不再依赖 Dart AOT，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
 | WebRTC P2P / TURN | ⏳ 二期（局域网直连 + 中继已覆盖当前场景） |
 
 ## 仓库结构
@@ -50,6 +50,7 @@
 |---|---|
 | [`app/`](app) | Flutter 客户端（Android 已通；鸿蒙共用同一套 Dart） |
 | [`packages/dsh_link/`](packages/dsh_link) | 纯 Dart 协议核心：Noise IK、分片、信封、RPC、双传输 |
+| [`packages/dsh_arkts/`](packages/dsh_arkts) | 同一套协议的 TypeScript 版，供鸿蒙 ArkTS 使用；金标向量与本机实测均通过 |
 | [`tools/ohos-probe/`](tools/ohos-probe) | 最小鸿蒙 ArkTS 宿主工程，Windows 上可产出未签名 HAP |
 | [`host/`](host) | DSH Host 插件，零运行时依赖的 ESM |
 | [`relay/`](relay) | 极简中继，只做房间配对与密文转发 |
@@ -126,9 +127,22 @@ node probe/aead_vector.mjs      # RFC 8439 向量
 node probe/noise_vector.mjs     # 完整握手 + 传输密钥回放
 ```
 
+TypeScript 版协议核心（鸿蒙 ArkTS 用同一份源码）有自己的一套断言，读的是**同一份** fixture：
+
+```powershell
+cd packages/dsh_arkts
+npm test                        # 金标向量 + 帧/分片/信封/配对自检
+```
+
+需要**运行中的 Harness** 时，它还能跑一次真实握手：
+
+```powershell
+node probe/live-ticket.mjs      # 现场刷新配对码
+cd packages/dsh_arkts; npm run test:live
+
 设计细节见 [docs/superpowers/specs/2026-11-20-pocket-harness-design.md](docs/superpowers/specs/2026-11-20-pocket-harness-design.md)。
 
-CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：三份独立作业分别跑协议层、Host 插件与中继、Flutter 客户端（含 `flutter build apk --debug`）。鸿蒙作业是手动触发，当前只说明缺失的工具链，详见打包文档。
+CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作业分别跑 Dart 协议层、Host 插件与中继、TypeScript 协议层、Flutter 客户端（含 `flutter build apk --debug`）。鸿蒙打包作业是手动触发，当前只说明缺失的工具链，详见打包文档。
 
 ## 安全
 
