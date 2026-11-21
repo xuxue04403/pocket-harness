@@ -619,8 +619,90 @@ LiveFrame? readLiveFrame(Map<String, Object?> frame) {
   return LiveFrame(kind: kind, attemptId: attemptId, chunk: inner['chunk']);
 }
 
-/// A live, encrypted link to one Host, with the DSH calls the phone makes.
+/// One configuration namespace as the Host resolves it right now.
 ///
+/// DSH layers configuration (declared defaults, the profile document, the
+/// environment) and resolves it per namespace. [value] is the result of that
+/// layering, which is what a new session would inherit; [base] is what the
+/// providers declare and [user] is only what this profile wrote.
+class SettingsNamespace {
+  const SettingsNamespace({
+    required this.ns,
+    required this.value,
+    required this.revision,
+    this.base = const {},
+    this.user = const {},
+    this.applies,
+    this.secrets = const [],
+  });
+
+  final String ns;
+  final Map<String, Object?> value;
+  final Map<String, Object?> base;
+  final Map<String, Object?> user;
+  final int revision;
+
+  /// How a write takes effect: DSH reports `live` for values it re-reads.
+  final String? applies;
+
+  /// Field names the Host redacted, so the phone can say "已在电脑上设置"
+  /// instead of showing an empty box the person cannot fill.
+  final List<String> secrets;
+
+  static SettingsNamespace? fromJson(Object? input) {
+    if (input is! Map<String, Object?>) return null;
+    final ns = input['ns'];
+    if (ns is! String || ns.isEmpty) return null;
+    Map<String, Object?> map(Object? value) =>
+        value is Map<String, Object?> ? value : const <String, Object?>{};
+    final revision = input['revision'];
+    final secrets = input['secrets'];
+    final applies = input['applies'];
+    return SettingsNamespace(
+      ns: ns,
+      value: map(input['value']),
+      base: map(input['base']),
+      user: map(input['user']),
+      revision: revision is num ? revision.toInt() : 0,
+      applies: applies is String ? applies : null,
+      secrets: secrets is List ? [for (final name in secrets) if (name is String) name] : const [],
+    );
+  }
+}
+
+/// Everything `settings/describe` returned.
+class SettingsSnapshot {
+  const SettingsSnapshot({
+    required this.writable,
+    required this.namespaces,
+  });
+
+  /// False when the profile's settings document is read-only, in which case the
+  /// phone must not offer to edit anything.
+  final bool writable;
+  final List<SettingsNamespace> namespaces;
+
+  /// Looks one namespace up, or returns null when this Host has no such section.
+  SettingsNamespace? find(String ns) {
+    for (final namespace in namespaces) {
+      if (namespace.ns == ns) return namespace;
+    }
+    return null;
+  }
+
+  static SettingsSnapshot fromJson(Map<String, Object?> value) {
+    final namespaces = value['namespaces'];
+    return SettingsSnapshot(
+      writable: value['writable'] == true,
+      namespaces: [
+        if (namespaces is List)
+          for (final entry in namespaces) ?SettingsNamespace.fromJson(entry),
+      ],
+    );
+  }
+}
+
+/// A live, encrypted link to one Host, with the DSH calls the phone makes.
 /// Every method here is a thin wrapper over one Typert endpoint; the arguments
 /// are spelled exactly as the Host's descriptors require, because the gateway
 /// validates parameter names.
@@ -928,6 +1010,35 @@ class HostLink {
     final events = _events;
     if (events == null) throw StateError('the question stream is not open');
     await events.answer(question.invocation, delegate: true);
+  }
+
+  /// Every settings namespace this Host exposes, with its effective values.
+  ///
+  /// DSH layers configuration (defaults, the profile document, the environment)
+  /// and resolves it per namespace; what comes back here is the resolved value a
+  /// new session would inherit, which is what the phone needs to show.
+  Future<SettingsSnapshot> settings() async {
+    final value = await _client.rpc.call('settings/describe', const {});
+    return SettingsSnapshot.fromJson(value);
+  }
+
+  /// Replaces one namespace's value.
+  ///
+  /// The revision the caller last read travels with the write: the Host rejects
+  /// a stale one with `settings/conflict` rather than overwriting a change made
+  /// on the desktop in the meantime.
+  Future<SettingsNamespace> updateSetting(
+    SettingsNamespace namespace,
+    Map<String, Object?> value,
+  ) async {
+    final answer = await _client.rpc.call('settings/update', {
+      'ns': namespace.ns,
+      'patch': value,
+      'expectedRevision': namespace.revision,
+    });
+    final updated = SettingsNamespace.fromJson(answer);
+    if (updated == null) throw StateError('电脑没有返回更新后的设置');
+    return updated;
   }
 
   Future<void> close() async {

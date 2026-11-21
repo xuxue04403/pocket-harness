@@ -183,6 +183,65 @@ void main() {
   });
 
   _questionTests();
+  _settingsTests();
+}
+
+/// The settings payloads, as `settings/describe` returns them.
+void _settingsTests() {
+  group('settings snapshot', () {
+    test('reads namespaces, revisions and the writable flag', () {
+      final snapshot = SettingsSnapshot.fromJson({
+        'writable': true,
+        'namespaces': [
+          {
+            'ns': 'agent-default-model',
+            'revision': 10,
+            'value': {'provider': 'gateway', 'model': 'deepseek-v4.1-flash'},
+            'secrets': <Object?>[],
+          },
+        ],
+      });
+      expect(snapshot.writable, isTrue);
+      final model = snapshot.find('agent-default-model');
+      expect(model, isNotNull);
+      expect(model!.revision, 10);
+      expect(model.value['model'], 'deepseek-v4.1-flash');
+    });
+
+    test('skips entries without a namespace name', () {
+      final snapshot = SettingsSnapshot.fromJson({
+        'writable': false,
+        'namespaces': [
+          {'revision': 1, 'value': <String, Object?>{}},
+          {'ns': 'ui-theme', 'revision': 2, 'value': {'preference': 'system'}},
+        ],
+      });
+      expect(snapshot.writable, isFalse);
+      expect(snapshot.namespaces.single.ns, 'ui-theme');
+    });
+
+    test('treats a missing namespace list as empty rather than crashing', () {
+      final snapshot = SettingsSnapshot.fromJson(const {'writable': true});
+      expect(snapshot.namespaces, isEmpty);
+      expect(snapshot.find('agent-default-model'), isNull);
+    });
+
+    test('records which fields the Host redacted', () {
+      final namespace = SettingsNamespace.fromJson({
+        'ns': 'web-search-free',
+        'revision': 3,
+        'value': {'provider': 'x'},
+        'secrets': ['apiKey', 42],
+      });
+      expect(namespace!.secrets, ['apiKey']);
+    });
+
+    test('falls back to revision zero when the Host omits it', () {
+      final namespace = SettingsNamespace.fromJson({'ns': 'ui-theme'});
+      expect(namespace!.revision, 0);
+      expect(namespace.value, isEmpty);
+    });
+  });
 }
 
 /// Wraps one durable event the way the Host's journal delivers it.

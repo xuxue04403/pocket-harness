@@ -6,6 +6,7 @@ import '../storage/host_store.dart';
 import 'chat_page.dart';
 import 'new_session_sheet.dart';
 import 'search_page.dart';
+import 'settings_page.dart';
 
 /// Connects to one Host and lists its sessions.
 ///
@@ -134,6 +135,17 @@ class _SessionsPageState extends State<SessionsPage> {
     if (mounted) _refresh();
   }
 
+  Future<void> _settings() async {
+    final link = _link;
+    if (link == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => SettingsPage(link: link)),
+    );
+    // A changed default model only shows up in the next new session, but the
+    // list also carries titles that the desktop may have renamed meanwhile.
+    if (mounted) _refresh();
+  }
+
   Future<void> _search() async {
     final link = _link;
     if (link == null) return;
@@ -215,6 +227,11 @@ class _SessionsPageState extends State<SessionsPage> {
             onPressed: _link == null ? null : _search,
             icon: const Icon(Icons.search),
             tooltip: '搜索会话内容',
+          ),
+          IconButton(
+            onPressed: _link == null ? null : _settings,
+            icon: const Icon(Icons.tune),
+            tooltip: '电脑设置',
           ),
           IconButton(
             onPressed: _refresh,

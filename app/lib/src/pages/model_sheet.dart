@@ -2,16 +2,18 @@ import 'package:material_ui/material_ui.dart';
 
 import '../dsh/host_link.dart';
 
-/// One session's model picker.
+/// One model picker, for a session's override or for the Host-wide default.
 ///
 /// DSH keeps two things apart: the Host-wide default a session inherits, and the
-/// route this one session actually uses. The sheet shows both so a change is
-/// always read as a per-session override rather than a global one.
+/// route this one session actually uses. The sheet states which of the two the
+/// caller is changing, so a write is never mistaken for the other.
 Future<ModelSelection?> showModelPicker(
   BuildContext context, {
   required Future<ModelCatalog> catalog,
   required Future<ModelSelection?> current,
   required Future<ModelSelection> Function(ModelChoice choice, String? effort) onSelect,
+  String title = '本会话使用的模型',
+  String subtitle = '只改这一个会话。电脑上的默认设置不受影响，新建会话仍从默认开始。',
 }) {
   return showModalBottomSheet<ModelSelection>(
     context: context,
@@ -21,16 +23,26 @@ Future<ModelSelection?> showModelPicker(
       catalog: catalog,
       current: current,
       onSelect: onSelect,
+      title: title,
+      subtitle: subtitle,
     ),
   );
 }
 
 class _ModelSheet extends StatefulWidget {
-  const _ModelSheet({required this.catalog, required this.current, required this.onSelect});
+  const _ModelSheet({
+    required this.catalog,
+    required this.current,
+    required this.onSelect,
+    required this.title,
+    required this.subtitle,
+  });
 
   final Future<ModelCatalog> catalog;
   final Future<ModelSelection?> current;
   final Future<ModelSelection> Function(ModelChoice choice, String? effort) onSelect;
+  final String title;
+  final String subtitle;
 
   @override
   State<_ModelSheet> createState() => _ModelSheetState();
@@ -117,12 +129,9 @@ class _ModelSheetState extends State<_ModelSheet> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       children: [
-        Text('本会话使用的模型', style: theme.textTheme.titleMedium),
+        Text(widget.title, style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
-        Text(
-          '只改这一个会话。电脑上的默认设置不受影响，新建会话仍从默认开始。',
-          style: theme.textTheme.bodySmall,
-        ),
+        Text(widget.subtitle, style: theme.textTheme.bodySmall),
         if (_busy) const Padding(
           padding: EdgeInsets.symmetric(vertical: 12),
           child: LinearProgressIndicator(),
