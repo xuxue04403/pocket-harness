@@ -200,11 +200,21 @@ LinkServer ── Link ── SecureChannel ── RpcServer ── new Peer(ctx
 
 | 端点 | 参数名 |
 |---|---|
-| `session/list` | `_request`（注意下划线） |
-| `session/create` / `session/prompt` / `session/follow` / `session/page` / `session/cancel` | `request` |
-| `job/list` / `job/kill` | `request`，且必须含 `sessionId` |
+| `session/list` | `{_request: {}}`（注意下划线） |
+| `session/create` / `prompt` / `follow` / `page` / `cancel` / `rename` / `selectModel` / `projections` / `state` / `attachment` / `search` | `{request: {...}}` |
+| `session/modelCatalog` | `{}`（无参数） |
+| `skills/list` | `{request: {sessionId}}` |
+| `agentPresets/list` | `{}`（命名空间是 camelCase，不是 `agent-preset`） |
+| `settings/describe` | `{}` |
+| `settings/update` | `{ns, patch, expectedRevision}`（**无** `request` 包装） |
+| `job/list` / `job/follow` / `job/kill` | `{request: {sessionId, ...}}` |
+| `workspaceFiles/list` / `read` / `search` | `{workspaceFileScopeId, path, range?}`，**扁平命名参数，无 `request` 包装** |
 
-另外 `session/follow` 与 `session/observeEvent` 不带 `activate: true` 时**永远不产出帧**（DSH 有意不让"跟随"唤醒空闲 Agent）；`assistantStream: true` 才会推逐字增量。
+三个额外的坑：
+
+- `session/follow` 与 `session/observeEvent` 不带 `activate: true` 时**永远不产出帧**（DSH 有意不让“跟随”唤醒空闲 Agent）；`assistantStream: true` 才会推逐字增量。
+- `workspaceFiles/list` 的根目录必须传 `'.'`，传空串会被 Host 以 `path is required` 拒绝；`workspaceFileScopeId` 传的是 **Session id**，Host 自己据会话推出工作区根，所以手机只能看会话拥有的目录。
+- `job/list` 是不会结束的整集流：读一次要用 `.first` 而不是 `toList()`，否则永远挂着。
 
 ## 5. 验证策略与实际结果
 
@@ -213,7 +223,8 @@ LinkServer ── Link ── SecureChannel ── RpcServer ── new Peer(ctx
 | L1 字节级 | Noise 握手、分片、信封、AEAD | 金标向量 + RFC 8439 官方向量 | ✅ `dart test` / `node probe/aead_vector.mjs` / `node probe/noise_vector.mjs` |
 | L2 协议级 | Host ↔ Dart 完成握手 + RPC | 真 Host 桩 + 集成测试 | ✅ `link_integration_test.dart`、`plugin_integration_test.dart` |
 | L3 真实业务 | 列出会话、读历史、发消息 | 对运行中的 Harness 调用 | ✅ `live_harness_test.dart`；模拟器上真实收发 |
-| L4 UI | 端到端 | Android 模拟器 `phone35` | ✅ 配对→列表→会话→逐字流式回复 |
+| L3b 实时任务 | 后台任务名单与输出 | 对运行中的 Harness 调 `job/list`、`job/follow` | ✅ `probe_job_follow_test.dart`；模拟器上看到名单与输出 |
+| L4 UI | 端到端 | Android 模拟器 `phone35` | ✅ 配对→列表→会话→逐字流式→文件→任务→设置 |
 | L5 公网 | 经中继 | 本机跑 `relay/`，Host 与手机都连它 | ✅ `relay_integration_test.dart`、`host/relay.test.js` |
 
 **回归命令**：
