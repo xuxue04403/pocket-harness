@@ -71,6 +71,18 @@ class _ChatPageState extends State<ChatPage> {
   ModelSelection? _selection;
   bool _loadingSelection = true;
 
+  /// The agent's current todo list, or null when it has never written one.
+  ///
+  /// The desktop pins this above the transcript while a turn runs; on a phone
+  /// the same panel is what keeps a long autonomous run legible, because the
+  /// transcript alone only shows what has already happened.
+  List<TodoItem>? _todos;
+  bool _todosOpen = true;
+
+  /// Whether the person has seen the list at least once, so the panel does not
+  /// spring open again after they collapse it.
+  bool _todosTouched = false;
+
   /// When the running turn started, so the page can count up like the desktop.
   ///
   /// The desktop prints `深度求索中，用时 2分13秒` under a running turn; keeping the
@@ -85,6 +97,7 @@ class _ChatPageState extends State<ChatPage> {
     _start();
     _listenForQuestions();
     unawaited(_loadSelection());
+    unawaited(_loadTodos());
   }
 
   /// Starts or stops the one-second clock that drives the running-turn footer.
@@ -112,6 +125,17 @@ class _ChatPageState extends State<ChatPage> {
       // transcript is unaffected, so this never becomes an error banner.
       if (!mounted) return;
       setState(() => _loadingSelection = false);
+    }
+  }
+
+  Future<void> _loadTodos() async {
+    try {
+      final todos = await widget.link.todos(widget.sessionId);
+      if (!mounted) return;
+      setState(() => _todos = todos);
+    } on Object {
+      // The list is a convenience, not the conversation: a Host that cannot
+      // project it still has a usable chat page.
     }
   }
 
@@ -259,6 +283,14 @@ class _ChatPageState extends State<ChatPage> {
         if (eventType == 'turn/end') {
           _turnStarted = null;
           _syncTicker();
+        }
+        if (eventType == 'todo/write') {
+          final payload = event is Map<String, Object?> ? event['data'] : null;
+          final todos = readTodoWrite(payload);
+          _todos = todos.isEmpty ? null : todos;
+          // A fresh plan is worth showing even if the panel was collapsed for
+          // the previous one; the person asked for it by starting a new turn.
+          if (!_todosTouched) _todosOpen = true;
         }
       });
       _scrollToEnd();
@@ -451,6 +483,15 @@ class _ChatPageState extends State<ChatPage> {
               ),
               onChoice: _askChoice,
               onDelegate: (question) => _answerQuestion(question, choice: _Answer.delegate),
+            ),
+          if (_todos case final todos?)
+            _TodoPanel(
+              items: todos,
+              open: _todosOpen,
+              onToggle: () => setState(() {
+                _todosTouched = true;
+                _todosOpen = !_todosOpen;
+              }),
             ),
           Expanded(child: _body()),
           if (_pendingImages.isNotEmpty)
@@ -1238,6 +1279,115 @@ enum _Answer { approve, reject, delegate }
 ///
 /// Only the oldest question is expanded: a queue of five stale approvals is
 /// noise, and DSH asks them one at a time anyway.
+/// The agent's plan, pinned above the transcript like the desktop's todo panel.
+///
+/// Collapsed it shows one line — done/total and the item being worked on — which
+/// is the part worth glancing at while a turn runs. Expanded it lists every item
+/// with its state, so a person can see how far along a long autonomous run is
+/// without reading the whole transcript.
+class _TodoPanel extends StatelessWidget {
+  const _TodoPanel({required this.items, required this.open, required this.onToggle});
+
+  final List<TodoItem> items;
+  final bool open;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final done = items.where((item) => item.isDone).length;
+    final active = items.where((item) => item.isRunning).firstOrNull;
+    final summary = active?.content ?? items.firstWhere((item) => !item.isDone, orElse: () => items.last).content;
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHigh,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Row(
+                children: [
+                  Icon(
+                    open ? Icons.expand_more : Icons.chevron_right,
+                    size: 16,
+                    color: theme.colorScheme.outline,
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.checklist, size: 16, color: theme.colorScheme.primary),
+                  const SizedBox(width: 6),
+                  Text('待办 $done/${items.length}', style: theme.textTheme.labelMedium),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      summary,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (open)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final item in items) _TodoLine(item: item),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TodoLine extends StatelessWidget {
+  const _TodoLine({required this.item});
+
+  final TodoItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = item.isDone
+        ? theme.colorScheme.outline
+        : item.isRunning
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurfaceVariant;
+    final icon = item.isDone
+        ? Icons.check_circle_outline
+        : item.isRunning
+        ? Icons.radio_button_checked
+        : Icons.radio_button_unchecked;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              item.content,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: color,
+                decoration: item.isDone ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _QuestionBar extends StatelessWidget {
   const _QuestionBar({
     required this.questions,

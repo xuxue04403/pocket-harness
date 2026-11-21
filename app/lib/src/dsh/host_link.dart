@@ -445,6 +445,63 @@ class NoticeRow extends TranscriptRow {
   final bool isError;
 }
 
+/// One line of the agent's todo list.
+///
+/// DSH replaces the whole list on every `todo/write`, so an item needs no id:
+/// the newest snapshot is the truth. Three statuses are all the desktop shows,
+/// and they are what makes the panel worth reading — a list where everything is
+/// `pending` says nothing, while one with a single `in_progress` line says what
+/// the agent is doing right now.
+class TodoItem {
+  const TodoItem({required this.content, required this.status});
+
+  final String content;
+
+  /// `pending`, `in_progress` or `completed`; unknown values are kept verbatim
+  /// so a newer Host does not make the panel disappear.
+  final String status;
+
+  bool get isDone => status == 'completed';
+  bool get isRunning => status == 'in_progress';
+
+  static TodoItem? fromJson(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    final content = value['content'];
+    if (content is! String || content.trim().isEmpty) return null;
+    final status = value['status'];
+    return TodoItem(content: content.trim(), status: status is String ? status : 'pending');
+  }
+}
+
+/// Reads the todo list out of a `session/projections` value bag.
+///
+/// `todos` is `null` before the first write, which is different from an empty
+/// list: the panel stays hidden rather than claiming the agent has no plan.
+List<TodoItem>? readTodos(Object? projectionsValues) {
+  if (projectionsValues is! Map<String, Object?>) return null;
+  final raw = projectionsValues['todos'];
+  if (raw is! List) return null;
+  final items = <TodoItem>[];
+  for (final entry in raw) {
+    final item = TodoItem.fromJson(entry);
+    if (item != null) items.add(item);
+  }
+  return items;
+}
+
+/// Reads the todo list out of a `todo/write` event payload.
+List<TodoItem> readTodoWrite(Object? payload) {
+  if (payload is! Map<String, Object?>) return const [];
+  final raw = payload['todos'];
+  if (raw is! List) return const [];
+  final items = <TodoItem>[];
+  for (final entry in raw) {
+    final item = TodoItem.fromJson(entry);
+    if (item != null) items.add(item);
+  }
+  return items;
+}
+
 /// Turns DSH session events into transcript rows.
 ///
 /// Unknown event types are skipped on purpose: the desktop records dozens of
@@ -1132,6 +1189,17 @@ class HostLink {
     });
     final values = value['values'];
     return ModelSelection.fromProjections(values);
+  }
+
+  /// Reads this session's todo list, for the panel above the transcript.
+  ///
+  /// Returns null when the agent has never written a list, so the panel can stay
+  /// out of the way instead of showing an empty box.
+  Future<List<TodoItem>?> todos(String sessionId) async {
+    final value = await _client.rpc.call('session/projections', {
+      'request': {'sessionId': sessionId},
+    });
+    return readTodos(value['values']);
   }
 
   /// Points one session at [choice], optionally pinning a reasoning effort.

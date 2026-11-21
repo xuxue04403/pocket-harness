@@ -186,6 +186,7 @@ void main() {
   _settingsTests();
   _workspaceTests();
   _jobTests();
+  _todoTests();
 }
 
 /// The workspace file payloads, as `workspaceFiles/*` returns them.
@@ -876,6 +877,77 @@ void _jobTests() {
     test('ignores a frame it has no meaning for', () {
       expect(JobOutputFrame.fromJson({'type': 'mystery'}), isNull);
       expect(JobOutputFrame.fromJson(const {}), isNull);
+    });
+  });
+}
+
+
+/// The todo panel reads two very different payloads: a projection value bag
+/// (`session/projections`) and a live `todo/write` event. Both are covered here
+/// because a mismatch between them is silent — the panel just never appears.
+void _todoTests() {
+  group('todo items', () {
+    test('reads content and status', () {
+      final item = TodoItem.fromJson({'content': '  写测试  ', 'status': 'in_progress'});
+      expect(item?.content, '写测试');
+      expect(item?.isRunning, isTrue);
+      expect(item?.isDone, isFalse);
+    });
+
+    test('drops entries without usable content', () {
+      expect(TodoItem.fromJson({'status': 'pending'}), isNull);
+      expect(TodoItem.fromJson({'content': '   '}), isNull);
+      expect(TodoItem.fromJson('nope'), isNull);
+    });
+
+    test('keeps an unknown status verbatim instead of hiding the row', () {
+      final item = TodoItem.fromJson({'content': '未来状态', 'status': 'blocked'});
+      expect(item?.status, 'blocked');
+      expect(item?.isDone, isFalse);
+      expect(item?.isRunning, isFalse);
+    });
+
+    test('treats a missing status as pending', () {
+      expect(TodoItem.fromJson({'content': 'x'})?.status, 'pending');
+    });
+  });
+
+  group('todos projection', () {
+    test('reads the list out of a projection value bag', () {
+      final todos = readTodos({
+        'todos': [
+          {'content': 'a', 'status': 'completed'},
+          {'content': 'b', 'status': 'in_progress'},
+        ],
+      });
+      expect(todos?.map((item) => item.content), ['a', 'b']);
+      expect(todos?.first.isDone, isTrue);
+    });
+
+    test('returns null before the first write, which is not an empty list', () {
+      expect(readTodos({'todos': null}), isNull);
+      expect(readTodos({'title': 'no todos key'}), isNull);
+      expect(readTodos(null), isNull);
+    });
+
+    test('returns an empty list when every entry is unusable', () {
+      expect(readTodos({'todos': [{'status': 'pending'}]}), isEmpty);
+    });
+  });
+
+  group('todo write', () {
+    test('reads the snapshot a live event carries', () {
+      final todos = readTodoWrite({
+        'todos': [
+          {'content': '部署', 'status': 'pending'},
+        ],
+      });
+      expect(todos.single.content, '部署');
+    });
+
+    test('answers empty for a malformed payload rather than throwing', () {
+      expect(readTodoWrite(null), isEmpty);
+      expect(readTodoWrite({'todos': 'nope'}), isEmpty);
     });
   });
 }
