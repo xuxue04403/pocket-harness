@@ -30,10 +30,11 @@
 | `src/questions.ts` | 把转发来的 waterfall 说成审批或选择题，并组装 DSH 期望的答案 |
 | `src/models.ts` | 模型清单与当前路由：把 provider 分组摊平，两种路由形状都认 |
 | `src/agent_presets.ts` | 智能体预设与新建会话的参数：「跟随电脑」与「显式选默认预设」要能区分 |
+| `src/skills.ts` | 会话可用的技能清单与 `/name` 插入文本 |
 
 ## 为什么能信
 
-`npm test` 跑十一套断言：
+`npm test` 跑十二套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -70,8 +71,11 @@
 11. **`test/agent_presets.ts`** —— 预设与新建会话：`order` 排序、缺 `name` 用 id、
     坏条目跳过、默认预设的识别、「跟随电脑」这一行要把默认预设的名字带上、**空
     `cwd` 绝不能变成 `cwd: ''` 发出去**、空预设 id 被丢弃。
+12. **`test/skills.ts`** —— 技能清单与插入：坏条目跳过、**空查询返回全部**（与会话
+    过滤相反）、名称/说明/用途三处都能筛、`/name ` 的拼接在空草稿与非空草稿下
+    都带正确的分隔符、连续插两条不会粘成 `/a/b`。
 
-`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做五件事：
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做六件事：
 
 1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
    数学正确，而是「这份代码能跟真正的 Host 说话」。
@@ -89,6 +93,8 @@
 5. 读 `agentPresets/list`，要求至少一个预设、每个都有显示名、默认预设被标出来。
    同样**不真的新建会话**：那会在电脑上留下记录，请求体形状已由第 11 套断言
    与 `test/client.ts` 的假 Host 覆盖。
+6. 读 `skills/list`（要带一个真实 `sessionId`，清单是按会话算的），要求至少一条、
+   每条有名字、调用名是不带空格的小写 token。不插入也不发送。
 
 ## 在鸿蒙工程里怎么用
 

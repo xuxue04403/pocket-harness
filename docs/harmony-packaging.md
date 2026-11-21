@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（579 KB，内含 `ets/modules.abc` 333,204 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（606 KB，内含 `ets/modules.abc` 353,620 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -217,6 +217,20 @@ tar.exe -tf entry\build\default\outputs\default\entry-default-unsigned.hap
 
 `test/live_presets.ts` 用真实 Host 校验预设清单（本机是 `standard, ptc, minimal,
 cordis, lean`），同样**不真的新建会话**——那会在电脑上留下记录。
+
+### 技能也能在手机上插
+
+对话页标题下方还有一处「插入技能」，展开后是这个会话可用的 `/指令` 清单
+（本机 76 条，其中 8 条标了「仅手动」，即模型不能自己挑到）。插进去就是往输入框
+追加 `/name `，和手打完全一样 —— 不另发 RPC，所以不会多一条协议。
+
+数据侧在 `src/skills.ts`，被 `test/skills.ts` 钉住，两处容易错：
+
+- **空查询返回全部**，与会话过滤恰好相反（那里空查询返回空）；
+- **拼接要先补分隔符**：原文末尾不是空白时插 `/b` 会粘成 `/a/b`，那是另一个命令。
+
+`test/live_skills.ts` 用真实 Host 校验清单（要求至少一条、每条有名字、调用名是
+不带空格的小写 token），同样不插入也不发送。
 
 ## 二期路线建议
 

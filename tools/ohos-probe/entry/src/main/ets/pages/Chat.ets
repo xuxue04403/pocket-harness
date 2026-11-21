@@ -28,6 +28,12 @@ import {
   type ModelSelection,
 } from '../core/models'
 import type { StreamCancel, StreamOptions } from '../core/rpc'
+import {
+  appendSkill,
+  filterSkills,
+  readSkills,
+  type SkillEntry,
+} from '../core/skills'
 import { RemoteEvents, type RemoteInvocation } from '../core/remote_events'
 import {
   APPROVAL_ALLOWED_ONCE,
@@ -111,6 +117,10 @@ struct Chat {
   @State modelLabel: string = '默认模型'
   @State modelPanel: boolean = false
   @State switching: boolean = false
+  /** 这个会话能用的技能；插入的是 `/name` 斜杠命令，不是另一条 RPC。 */
+  @State skills: SkillEntry[] = []
+  @State skillPanel: boolean = false
+  @State skillQuery: string = ''
   private link: LinkClient | null = null
   private stream: FollowStream | null = null
   private followCancel: StreamCancel | null = null
@@ -177,6 +187,7 @@ struct Chat {
       this.watch(link)
       this.listenForQuestions(link)
       this.loadModel(link)
+      this.loadSkills(link)
     } catch (error) {
       this.error = describeError(error as Object)
       this.loading = false
@@ -203,6 +214,32 @@ struct Chat {
     }).catch(() => {
       this.selection = null
     })
+  }
+
+  /**
+   * 读这个会话能用的技能。
+   *
+   * 清单按会话的目录与预设算出来，所以必须带 `sessionId`。读不到就当没有 ——
+   * 没有技能面板不该影响正常对话。
+   */
+  private loadSkills(link: LinkClient): void {
+    link.rpc.call('skills/list', { request: { sessionId: this.sessionId } }, 15000).then((answer: JsonObject) => {
+      this.skills = readSkills(answer)
+    }).catch(() => {
+      this.skills = []
+    })
+  }
+
+  /**
+   * 把一条技能追加到输入框。
+   *
+   * 拼接规则在 `core/skills.ts` 的 `appendSkill` 里，单测钉住了「原文末尾不是空白
+   * 就先补一个空格」—— 否则 `/a` 后面再插 `/b` 会粘成 `/a/b`，那是另一个命令。
+   */
+  private insertSkill(skill: SkillEntry): void {
+    this.input = appendSkill(this.input, skill)
+    this.skillPanel = false
+    this.skillQuery = ''
   }
 
   /**
@@ -582,6 +619,79 @@ struct Chat {
     .backgroundColor('#F2F5F4')
   }
 
+  /**
+   * 技能面板。
+   *
+   * 插入的东西就是一条 `/name` 斜杠命令 —— 和手打完全一样，所以这里只往输入框
+   * 追加文本，不另发 RPC。清单按会话算出来，可能一个都没有。
+   */
+  @Builder
+  private skillPanelView() {
+    Column({ space: 6 }) {
+      Row({ space: 6 }) {
+        Text('插入技能').fontSize(13).fontColor('#1A1A1A').layoutWeight(1)
+        Button('收起')
+          .fontSize(12)
+          .height(28)
+          .backgroundColor('#EEEEEE')
+          .fontColor('#1A1A1A')
+          .onClick(() => { this.skillPanel = false })
+      }
+      .width('100%')
+      Text('技能清单由电脑按这个会话的目录和预设决定，插进去就是一条 /指令。')
+        .fontSize(11)
+        .fontColor('#888888')
+        .width('100%')
+      TextInput({ text: this.skillQuery, placeholder: '按名称或用途筛选' })
+        .fontSize(12)
+        .height(34)
+        .onChange((value: string) => { this.skillQuery = value })
+
+      if (this.skills.length === 0) {
+        Text('这个会话没有可用技能。').fontSize(12).fontColor('#888888')
+      } else if (filterSkills(this.skills, this.skillQuery).length === 0) {
+        Text('没有匹配的技能。').fontSize(12).fontColor('#888888')
+      } else {
+        List({ space: 0 }) {
+          ForEach(filterSkills(this.skills, this.skillQuery), (skill: SkillEntry) => {
+            ListItem() {
+              Column({ space: 2 }) {
+                Row({ space: 6 }) {
+                  Text(`/${skill.name}`).fontSize(14).fontColor('#1A1A1A').layoutWeight(1)
+                  if (!skill.modelInvocable) {
+                    Text('仅手动').fontSize(10).fontColor('#888888')
+                  }
+                }
+                .width('100%')
+                if (skill.description.length > 0) {
+                  Text(skill.description)
+                    .fontSize(11)
+                    .fontColor('#888888')
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                }
+              }
+              .alignItems(HorizontalAlign.Start)
+              .padding({ left: 4, right: 4, top: 8, bottom: 8 })
+              .width('100%')
+            }
+            .onClick(() => { this.insertSkill(skill) })
+          }, (skill: SkillEntry) => skill.name)
+        }
+        .height(240)
+        .width('100%')
+        .divider({ strokeWidth: 1, color: '#EEEEEE' })
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .padding(12)
+    .margin({ left: 12, right: 12, bottom: 8 })
+    .width('92%')
+    .borderRadius(10)
+    .backgroundColor('#F2F5F4')
+  }
+
   @Builder
   private transcriptRow(view: RowView) {
     Column({ space: 4 }) {
@@ -625,10 +735,21 @@ struct Chat {
           .fontSize(12)
           .fontColor('#0A7A4F')
           .decoration({ type: TextDecorationType.Underline, color: '#0A7A4F' })
+          .onClick(() => {
+            this.modelPanel = !this.modelPanel
+            this.skillPanel = false
+          })
+        Text('插入技能')
+          .fontSize(12)
+          .fontColor('#0A7A4F')
+          .decoration({ type: TextDecorationType.Underline, color: '#0A7A4F' })
+          .onClick(() => {
+            this.skillPanel = !this.skillPanel
+            this.modelPanel = false
+          })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })
-      .onClick(() => { this.modelPanel = !this.modelPanel })
 
       if (this.loading) {
         Row({ space: 8 }) {
@@ -640,6 +761,10 @@ struct Chat {
 
       if (this.modelPanel) {
         this.modelPanelView()
+      }
+
+      if (this.skillPanel) {
+        this.skillPanelView()
       }
 
       List({ space: 0 }) {
