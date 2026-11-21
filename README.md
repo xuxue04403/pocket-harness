@@ -78,8 +78,12 @@ pocket-harness: pairing code pocketharness://pair?t=...
 ```bash
 cd app
 flutter pub get
-flutter build apk --release
+flutter build apk --release --split-per-abi
 ```
+
+三份按 CPU 架构拆开的包：`app-arm64-v8a-release.apk`（约 24 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（约 20 MB，老设备）、`app-x86_64-release.apk`（约 26 MB，模拟器）。不拆包的单包约 35 MB。
+
+> 当前 release 沿用 debug 签名（`android/app/build.gradle.kts` 里 `signingConfig = signingConfigs.getByName("debug")`），只适合自用与测试；要发布到应用商店请换成自己的 keystore。
 
 ### 3. 配对
 
