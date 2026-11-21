@@ -20,10 +20,12 @@
 | `src/pairing.ts` | 配对票据、端点解析 |
 | `src/identity.ts` | 设备身份与 UUIDv7 形状的 id |
 | `src/link_protocol.ts` | 明文 hello 与配对证明 |
+| `src/secure_channel.ts` | 把帧过 Noise 的收发层，超限自动分片 |
+| `src/client.ts` | 手机侧连接流程：hello → Noise → RPC，先试局域网再走中继 |
 
 ## 为什么能信
 
-`npm test` 跑两套断言：
+`npm test` 跑三套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -31,6 +33,9 @@
    与 Node 侧 `probe/noise_vector.mjs` 读的是同一份数据 —— **三端同时绿，才说明协议真互通**。
 2. **`test/protocol.ts`** —— 帧、分片（含乱序重组、形状不一致拒绝）、信封版本校验、
    配对票据往返、prologue 逐字节固定、握手乱序拒绝。
+3. **`test/client.ts`** —— 在进程内扮演一台 Host（同一条内存管道两端），跑完整的
+   `LinkClient.connect`：局域网路由、加密往返、错误配对被拒、冒充 Host id 被拒、
+   错误码与 details 透传、流式帧、hello 超时、**只有中继坐标的票据走中继**。
 
 `npm run test:live` 更进一步：它连上**运行中的** DeepSeek Harness，跑完整 hello →
 Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是数学正确，而是
@@ -39,8 +44,11 @@ Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
 ## 在鸿蒙工程里怎么用
 
 `src/` 是平台无关的（除了 `test/`），hvigor 直接编译即可。已经实测：拷进
-`tools/ohos-probe/entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到
-`x25519`、`NoiseIkSession`、`createNoisePrologue`、`decodeTicket` 等符号。
+`tools/ohos-probe/entry/src/main/ets/core/` 后能通过 ArkTS 编译；探针页
+`entry/src/main/ets/selfcheck.ts` 引用了 `client.ts` 并带一个「跑一次完整客户端链路」
+的按钮，因此**连接流程本身也在 ArkTS 的检查范围里**（不引用就不会被编译，
+这是第一次接进去才发现 `hasRelay` 那个 bug 的原因）。产物 `.abc` 里能搜到
+`x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof` 等符号。
 
 需要替换的只有两处：
 

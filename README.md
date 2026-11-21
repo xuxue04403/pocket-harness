@@ -41,7 +41,7 @@
 | 待办面板 | ✅ 贴在对话上方，显示完成进度与当前项，可折叠 |
 | 会话分支 | ✅ 从当前会话分出一个副本，两边并行不互相影响 |
 | Android | ✅ 模拟器与构建均通过 |
-| HarmonyOS 7.0 | 🟡 协议核心的 ArkTS 版已能编进 HAP 并在 Windows 上真编译通过；整个 App 的 ArkTS 界面尚在搭建，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
+| HarmonyOS 7.0 | 🟡 协议核心与连接流程的 ArkTS 版已能编进 HAP 并在 Windows 上真编译通过；整个 App 的 ArkTS 界面尚在搭建，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
 | WebRTC P2P / TURN | ⏳ 二期（局域网直连 + 中继已覆盖当前场景） |
 
 ## 仓库结构
