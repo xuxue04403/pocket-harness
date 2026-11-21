@@ -45,7 +45,8 @@ class _SessionsPageState extends State<SessionsPage> {
       _error = null;
     });
     try {
-      final link = await HostLink.connect(widget.ticket, widget.store.identity());
+      final identity = await widget.store.identity();
+      final link = await HostLink.connect(widget.ticket, identity);
       if (!mounted) {
         await link.close();
         return const [];

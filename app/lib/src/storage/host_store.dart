@@ -1,44 +1,98 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dsh_link/dsh_link.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Everything the phone remembers between launches.
 ///
 /// The device identity is a long-lived X25519 key pair: the Host pins its public
 /// key on the first successful pairing, so later connections are admitted
-/// without the pairing secret. The host list holds the tickets the person
-/// scanned, which carry the Host's public key and LAN addresses.
+/// without the pairing secret. That private key is the only credential here,
+/// so it lives in the platform keystore rather than in preferences.
+///
+/// The host list holds the tickets the person scanned: the Host's public key,
+/// its LAN addresses, and the short-lived pairing secret. Pairing secrets are
+/// rotated by the Host every ten minutes, and a ticket is only useful until it
+/// expires, so the list stays in plain preferences.
 class HostStore {
-  HostStore._(this._preferences);
+  HostStore._(this._preferences, this._secrets);
 
   final SharedPreferences _preferences;
+  final FlutterSecureStorage _secrets;
 
   static const String _deviceIdKey = 'pocket_harness.device.id';
   static const String _deviceKeyKey = 'pocket_harness.device.key';
   static const String _hostsKey = 'pocket_harness.hosts';
 
-  /// Opens the store backed by the platform's preference storage.
+  /// Opens the store backed by the platform's preference and keystore storage.
   static Future<HostStore> open() async {
-    return HostStore._(await SharedPreferences.getInstance());
+    final preferences = await SharedPreferences.getInstance();
+    // resetOnError keeps a phone whose keystore entry was invalidated (a
+    // restore to new hardware, for example) working: it gets a fresh identity
+    // and pairs again instead of crashing on every launch.
+    const secrets = FlutterSecureStorage(aOptions: AndroidOptions());
+    return HostStore._(preferences, secrets);
   }
 
   /// The phone's identity, created on first use.
-  DeviceIdentity identity() {
+  ///
+  /// Reads the keystore first, then the preferences where earlier versions kept
+  /// the key. A key found in preferences is moved into the keystore and the
+  /// plaintext copy is removed, so upgrading a phone does not make the Host
+  /// forget it.
+  Future<DeviceIdentity> identity() async {
     final id = _preferences.getString(_deviceIdKey);
-    final key = _preferences.getString(_deviceKeyKey);
-    if (id != null && key != null) {
-      try {
-        return DeviceIdentity.fromPrivateKey(id, decodeBase64Url(key));
-      } on Object {
-        // A corrupt record is replaced rather than blocking the app: the Host
-        // simply sees an unfamiliar phone and asks for the pairing code again.
+    if (id != null) {
+      final stored = await _readPrivateKey(id);
+      if (stored != null) {
+        try {
+          return DeviceIdentity.fromPrivateKey(id, stored);
+        } on Object {
+          // A corrupt record is replaced rather than blocking the app: the Host
+          // simply sees an unfamiliar phone and asks for the pairing code again.
+        }
       }
     }
     final created = DeviceIdentity.generate();
-    _preferences.setString(_deviceIdKey, created.deviceId);
-    _preferences.setString(_deviceKeyKey, encodeBase64Url(created.privateKey));
+    await _writeIdentity(created);
     return created;
+  }
+
+  Future<Uint8List?> _readPrivateKey(String deviceId) async {
+    final fromKeystore = await _secrets.read(key: _deviceKeyKey);
+    if (fromKeystore != null) {
+      try {
+        return decodeBase64Url(fromKeystore);
+      } on FormatException {
+        // Fall through to the legacy copy and rewrite both.
+      }
+    }
+    final legacy = _preferences.getString(_deviceKeyKey);
+    if (legacy == null) return null;
+    try {
+      final bytes = decodeBase64Url(legacy);
+      // Move the plaintext key into the keystore, then drop the copy: earlier
+      // versions kept it in preferences, and silently generating a new identity
+      // here would make every paired Host forget this phone.
+      await _writeIdentity(DeviceIdentity.fromPrivateKey(deviceId, bytes));
+      return bytes;
+    } on Object {
+      await _preferences.remove(_deviceKeyKey);
+      return null;
+    }
+  }
+
+  Future<void> _writeIdentity(DeviceIdentity identity) async {
+    await _secrets.write(
+      key: _deviceKeyKey,
+      value: encodeBase64Url(identity.privateKey),
+    );
+    await _preferences.setString(_deviceIdKey, identity.deviceId);
+    // Only drop the legacy plaintext copy once the keystore write succeeded,
+    // so an interrupted migration cannot leave the phone without a key.
+    await _preferences.remove(_deviceKeyKey);
   }
 
   /// Every Host this phone has scanned, most recently used first.
