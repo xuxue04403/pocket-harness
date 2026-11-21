@@ -1,1 +1,1 @@
-{ "src": ["pages/Index", "pages/Sessions"] }
+{"src":["pages/Index","pages/Sessions","pages/Chat"]}

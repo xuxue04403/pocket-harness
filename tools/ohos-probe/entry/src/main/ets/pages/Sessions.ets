@@ -135,8 +135,10 @@ struct Sessions {
               .width('100%')
             }
             .onClick(() => {
-              // 对话页还没写；先把会话 id 显示出来，避免点击毫无反馈。
-              this.error = ''
+              router.pushUrl({
+                url: 'pages/Chat',
+                params: { ticketText: this.ticketText, sessionId: row.sessionId, title: row.title },
+              })
             })
           }, (row: SessionRow) => row.sessionId)
         }

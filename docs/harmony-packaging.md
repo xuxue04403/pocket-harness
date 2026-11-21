@@ -79,20 +79,25 @@ hdc install -r entry-default-signed.hap
 
 ## 在 Windows 上能做的部分（已实测跑通，可产出未签名 HAP）
 
+界面层已经是真的了：`tools/ohos-probe` 里有三个页面 —— 配对码页（粘贴 `pocketharness://pair?...`、保存身份）、会话列表页（`session/list`，运行中优先排序）、对话页（`session/follow` 带 `activate` 与 `assistantStream`，逐字增量 + 工具调用 + 异常的 `turn/end` 有一句话）。从配对到收发消息这条链路在 ArkTS 里是完整的，缺的是扫码、图片、设置这些外围页面。
+
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（334 KB，内含 `ets/modules.abc` 159,040 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（445 KB，内含 `ets/modules.abc` 235,348 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
 - **纯 Dart 层**：`dart test` 全覆盖，与平台无关。
 
-### ArkTS 不支持的两件事（真编译时报出来的）
+### ArkTS 不支持的四件事（真编译时报出来的）
 
 1. **没有 `TextEncoder`/`TextDecoder`**。鸿蒙的 lib 目标里不带 Web Encoding API，`new TextEncoder()` 直接是 `Cannot find name 'TextEncoder'`。`packages/dsh_arkts/src/bytes.ts` 里的 `utf8`/`fromUtf8` 是手写的（含代理对与非法序列的 U+FFFD 处理），用它们替代。
 2. **禁 `unknown`/隐式 any**（`arkts-no-any-unknown`）。`JSON.parse` 在鸿蒙 lib 里返回 `Object`，所以不能写 `let parsed: unknown = JSON.parse(...)`。`packages/dsh_arkts/src/json.ts` 的 `JsonObject`/`parseJsonObject`/`*Field` 就是为了收口这件事；协议内部一律用 `JsonObject` 而不是 `Record<string, unknown>`。
 
-改完这两处后，同一份源码在 Node 上跑金标向量、在鸿蒙上编译 HAP，两边都过。
+3. **禁对象展开**（`arkts-no-spread`）：`{ ...base, field: value }` 不合法，构造对象要把每个字段写出来（见 `src/transcript.ts` 的 `row()`）。
+4. **`AsyncGenerator` 的类型参数必须给全**：`AsyncGenerator<JsonObject>` 会因默认的 `any` 报错，要写 `AsyncGenerator<JsonObject, void, undefined>`。
+
+改完这四处后，同一份源码在 Node 上跑金标向量、在鸿蒙上编译 HAP，两边都过。
 
 ### 最小可复现步骤（Windows，无需华为账号）
 

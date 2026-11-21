@@ -23,10 +23,12 @@
 | `src/link_protocol.ts` | 明文 hello 与配对证明 |
 | `src/secure_channel.ts` | 把帧过 Noise 的收发层，超限自动分片 |
 | `src/client.ts` | 手机侧连接流程：hello → Noise → RPC，先试局域网再走中继 |
+| `src/session_rows.ts` | 会话列表的行：主键 `sessionId`、标题在 `projections` 里、运行中优先排序 |
+| `src/transcript.ts` | 会话正文的行：内容块拼接、工具调用、`turn/end` 的异常原因、流式增量 |
 
 ## 为什么能信
 
-`npm test` 跑四套断言：
+`npm test` 跑六套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -39,6 +41,12 @@
    错误码与 details 透传、流式帧、hello 超时、**只有中继坐标的票据走中继**。
 4. **`test/framing.ts`** —— TCP 长度前缀的边界：两条帧粘一块、一帧拆三段、逐字节喂、
    超限长度前缀被拒且之后永久失败、空帧、大端字节序。
+5. **`test/session_rows.ts`** —— 会话列表的真实形状：主键是 `sessionId`、标题藏在
+   `projections.values.title`、`projections` 可能缺失或为 `null`、没有 `cwd` 时退回
+   相对时间、坏条目被跳过、排序把运行中顶到最前且不改入参。
+6. **`test/transcript.ts`** —— 正文的真实形状：负载在 `event.data` 里、正文是内容块
+   数组、工具参数是未解析的字符串、`turn/end` 只有 `completed`/`aborted` 安静、
+   `tool-call-delta` 故意丢弃、snapshot 的 `records` 能被取出。
 
 `npm run test:live` 更进一步：它连上**运行中的** DeepSeek Harness，跑完整 hello →
 Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是数学正确，而是
