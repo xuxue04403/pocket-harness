@@ -10,6 +10,17 @@ const String defaultStreamOpenEndpoint = 'link/stream.open';
 /// Endpoint that stops a stream on the Host.
 const String defaultStreamCloseEndpoint = 'link/stream.close';
 
+/// How often an idle link is pinged.
+///
+/// A relay or a carrier-grade NAT will silently drop a connection that has been
+/// quiet for a few minutes, and the phone would only notice at the next prompt.
+/// Pinging well below that window keeps the path proven open, and a lost reply
+/// turns a dead link into a prompt error instead of a hung spinner.
+const Duration defaultHeartbeatInterval = Duration(seconds: 25);
+
+/// How long a ping may go unanswered before the link is treated as dead.
+const Duration defaultHeartbeatTimeout = Duration(seconds: 10);
+
 /// Request/response multiplexer over a [SecureChannel].
 ///
 /// Every request gets a correlation id, so many business calls can be in flight
@@ -18,6 +29,7 @@ class RpcClient {
   RpcClient(this.channel) {
     _subscription = channel.incoming.listen(
       (bytes) {
+        _lastFrameAt = DateTime.now();
         try {
           _dispatch(Envelope.decode(bytes));
         } catch (error, stack) {
@@ -26,6 +38,7 @@ class RpcClient {
       },
       onError: _events.addError,
       onDone: () {
+        _stopHeartbeat();
         for (final completer in _pending.values) {
           if (!completer.isCompleted) {
             completer.completeError(StateError('the secure channel closed'));
@@ -46,6 +59,56 @@ class RpcClient {
   StreamSubscription<Uint8List>? _subscription;
   int _nextId = 1;
   bool _closed = false;
+
+  /// When the last frame of any kind arrived, for the heartbeat's liveness test.
+  DateTime? _lastFrameAt;
+  Timer? _heartbeat;
+  bool _pinging = false;
+
+  /// Starts pinging an idle link so a silently dead route is noticed.
+  ///
+  /// Pinging is opt-in because it is extra traffic: a short-lived command line
+  /// client does not need it, while a phone holding a session open for minutes
+  /// does. [interval] is deliberately below any plausible idle timeout, and a
+  /// ping that goes unanswered for [timeout] fails every open stream.
+  void startHeartbeat({
+    Duration interval = defaultHeartbeatInterval,
+    Duration timeout = defaultHeartbeatTimeout,
+  }) {
+    if (_heartbeat != null || _closed) return;
+    _lastFrameAt = DateTime.now();
+    _heartbeat = Timer.periodic(interval, (_) {
+      if (_closed || _pinging) return;
+      final last = _lastFrameAt;
+      // Any traffic proves the route, so only an idle link is worth a ping.
+      if (last != null && DateTime.now().difference(last) < interval) return;
+      _pinging = true;
+      final sentAt = DateTime.now();
+      try {
+        notify('ping', {'at': sentAt.millisecondsSinceEpoch});
+      } catch (_) {
+        _pinging = false;
+        return;
+      }
+      Timer(timeout, () {
+        if (_closed || !_pinging) return;
+        final seen = _lastFrameAt;
+        if (seen != null && seen.isAfter(sentAt)) {
+          _pinging = false;
+          return;
+        }
+        _pinging = false;
+        // Nothing came back, so the route is gone even though the socket is not.
+        _events.addError(StateError('the link stopped answering'));
+        _failStreams(StateError('the link stopped answering'));
+      });
+    });
+  }
+
+  void _stopHeartbeat() {
+    _heartbeat?.cancel();
+    _heartbeat = null;
+  }
 
   /// Events the Host pushes that are not tied to a stream.
   Stream<Map<String, Object?>> get events => _events.stream;
@@ -230,6 +293,7 @@ class RpcClient {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    _stopHeartbeat();
     await _subscription?.cancel();
     _subscription = null;
     for (final completer in _pending.values) {

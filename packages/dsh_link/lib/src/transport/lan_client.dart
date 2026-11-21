@@ -84,6 +84,7 @@ class LinkClient {
     String? connectionId,
     Duration timeout = const Duration(seconds: 8),
     Duration relayTimeout = const Duration(seconds: 15),
+    bool heartbeat = true,
   }) async {
     final connection = connectionId ?? newDeviceId();
     final errors = <Object>[];
@@ -92,7 +93,7 @@ class LinkClient {
       if (parsed == null) continue;
       final (host, port) = parsed;
       try {
-        return await _connectLan(ticket, identity, connection, host, port, timeout);
+        return await _connectLan(ticket, identity, connection, host, port, timeout, heartbeat);
       } on LinkRefusedError {
         // A refusal is the Host's answer, not an unreachable endpoint: every
         // address in the ticket reaches the same Host, so asking the next one
@@ -104,7 +105,7 @@ class LinkClient {
     }
     if (ticket.hasRelay) {
       try {
-        return await _connectRelay(ticket, identity, connection, relayTimeout);
+        return await _connectRelay(ticket, identity, connection, relayTimeout, heartbeat);
       } on LinkRefusedError {
         rethrow;
       } catch (error) {
@@ -129,6 +130,7 @@ class LinkClient {
     String host,
     int port,
     Duration timeout,
+    bool heartbeat,
   ) async {
     final link = await LanLink.connect(host, port, timeout: timeout);
     return _handshake(
@@ -139,6 +141,7 @@ class LinkClient {
       timeout: timeout,
       route: LinkRoute.lan,
       endpoint: '$host:$port',
+      heartbeat: heartbeat,
     );
   }
 
@@ -147,6 +150,7 @@ class LinkClient {
     DeviceIdentity identity,
     String connectionId,
     Duration timeout,
+    bool heartbeat,
   ) async {
     final url = Uri.tryParse(ticket.relayUrl!);
     if (url == null || !url.hasScheme) {
@@ -167,6 +171,7 @@ class LinkClient {
       timeout: timeout,
       route: LinkRoute.relay,
       endpoint: url.host,
+      heartbeat: heartbeat,
     );
   }
 
@@ -179,6 +184,7 @@ class LinkClient {
     required Duration timeout,
     required LinkRoute route,
     required String endpoint,
+    required bool heartbeat,
   }) async {
     // The hello answer races the transport failure; whichever lands first wins.
     final answer = transport.incoming.first.timeout(timeout);
@@ -206,10 +212,15 @@ class LinkClient {
     // The initiator speaks first, so message one goes out immediately.
     unawaited(channel.handshake().catchError((Object _) {}));
     await channel.ready.timeout(timeout);
+    final rpc = RpcClient(channel);
+    // A phone holds a link open across screen locks and idle stretches, which is
+    // exactly when a relay or a NAT drops the route without telling either end.
+    // The command-line probes above do not need this, so it stays opt-in here.
+    if (heartbeat) rpc.startHeartbeat();
     return LinkClient._(
       transport: transport,
       channel: channel,
-      rpc: RpcClient(channel),
+      rpc: rpc,
       route: route,
       endpoint: endpoint,
     );

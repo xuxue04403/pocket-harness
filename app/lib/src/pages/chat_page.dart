@@ -150,12 +150,27 @@ class _ChatPageState extends State<ChatPage> {
     _follow = widget.link.follow(widget.sessionId).listen(
       _onFrame,
       onError: (Object error) {
-        if (mounted) setState(() => _error = '$error');
+        if (mounted) setState(() => _error = _describe(error));
       },
       onDone: () {
         if (mounted) setState(() => _error ??= '电脑端关闭了这个会话的实时连接。');
       },
     );
+  }
+
+  /// Turns a dropped link into something worth reading.
+  ///
+  /// The heartbeat reports a dead-but-open socket as a `StateError`, whose text
+  /// is written for developers; a phone user needs to know the connection is
+  /// gone and what to do about it.
+  String _describe(Object error) {
+    if (error is StateError) {
+      if ('$error'.contains('stopped answering')) {
+        return '连接已经断了（电脑没有回应心跳）。请返回上一页重新连接。';
+      }
+      if ('$error'.contains('closed')) return '连接已关闭。请返回上一页重新连接。';
+    }
+    return '$error';
   }
 
   void _onFrame(Map<String, Object?> frame) {
