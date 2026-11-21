@@ -11,7 +11,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { decodeMatrix } from '../src/qr/decode'
-import { grayFromLuma, shrinkGray, type LumaFrame } from '../src/qr/frame'
+import { grayFromLuma, grayFromRgba, shrinkGray, type LumaFrame } from '../src/qr/frame'
 import {
   affineFromSymbol,
   arrangeCorners,
@@ -184,6 +184,40 @@ function checkLuma(): void {
   ok('a short luma plane is refused', refused)
 }
 
+function checkRgba(): void {
+  // Pure white, pure black and a red patch: luma must follow the eye, not the
+  // average of the channels.
+  const pixels = new Uint8Array(3 * 4)
+  pixels.set([255, 255, 255, 255], 0)
+  pixels.set([0, 0, 0, 255], 4)
+  pixels.set([255, 0, 0, 255], 8)
+  const gray = grayFromRgba(pixels, 3, 1, 3)
+  sameNumber('white stays white', gray.pixels[0], 255)
+  sameNumber('black stays black', gray.pixels[1], 0)
+  sameNumber('pure red is a dark grey (76)', gray.pixels[2], 76)
+
+  // A stride wider than the picture: the padding between rows must be skipped.
+  const wide = new Uint8Array(4 * 2 * 4)
+  for (let index = 0; index < wide.length; index += 4) {
+    wide.set([0, 0, 0, 255], index)
+  }
+  // Paint the padding column white; a strided read must never see it.
+  wide.set([255, 255, 255, 255], 3 * 4)
+  wide.set([255, 255, 255, 255], 7 * 4)
+  const strided = grayFromRgba(wide, 3, 2, 4)
+  sameNumber('a wide stride yields a 3x2 picture', strided.pixels.length, 6)
+  ok('the row padding is skipped, so every pixel is still black', strided.pixels[2] === 0 && strided.pixels[5] === 0)
+
+  // A short buffer must be refused rather than read past the end.
+  let refused = false
+  try {
+    grayFromRgba(new Uint8Array(8), 4, 4, 4)
+  } catch {
+    refused = true
+  }
+  ok('a short RGBA buffer is refused', refused)
+}
+
 function checkShrink(): void {
   // A 4x4 picture of four 2x2 quadrants shrinks to two pixels.
   const image = {
@@ -347,10 +381,11 @@ function checkFailures(): void {
   ok('a frame smaller than a symbol is refused', refused)
 }
 
-console.log('QR scan (finders, affine sampling, luma preprocessing)')
+console.log('QR scan (finders, affine sampling, luma and RGBA preprocessing)')
 checkOtsu()
 checkBinarize()
 checkLuma()
+checkRgba()
 checkShrink()
 checkFinderOnRenderedSymbol()
 checkRotation()

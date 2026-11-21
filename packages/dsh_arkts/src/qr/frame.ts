@@ -56,6 +56,47 @@ export function grayFromLuma(frame: LumaFrame): { width: number; height: number;
 }
 
 /**
+ * Turn a decoded RGBA picture into grayscale.
+ *
+ * This is the other way a camera reaches us: the system camera app hands back a
+ * JPEG, the image decoder turns that into RGBA pixels, and only then do we get a
+ * picture. Luma is the usual 0.299/0.587/0.114 mix, and the alpha channel is
+ * ignored — a photograph's alpha is either opaque or meaningless.
+ *
+ * `rowStride` here is in **pixels**, not bytes, because that is how the ohos
+ * image API reports it; a row of `width` pixels may sit inside a longer row.
+ */
+export function grayFromRgba(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+  rowStride: number,
+): { width: number; height: number; pixels: Uint8Array } {
+  if (width <= 0 || height <= 0) throw new Error('the picture has no area')
+  const stride = rowStride > 0 ? rowStride : width
+  if (stride < width) throw new Error(`a stride of ${stride} is narrower than ${width} pixels`)
+  const needed = stride * (height - 1) * 4 + width * 4
+  if (pixels.length < needed) {
+    throw new Error(`the picture is ${pixels.length} bytes but a ${width}x${height} frame needs ${needed}`)
+  }
+  const gray = new Uint8Array(width * height)
+  for (let y = 0; y < height; y += 1) {
+    const row = y * stride * 4
+    const out = y * width
+    for (let x = 0; x < width; x += 1) {
+      const at = row + x * 4
+      const red = pixels[at]
+      const green = pixels[at + 1]
+      const blue = pixels[at + 2]
+      // Integer weights of the BT.601 luma mix, so no float rounding differs
+      // between the two runtimes.
+      gray[out + x] = (red * 299 + green * 587 + blue * 114) / 1000
+    }
+  }
+  return { width: width, height: height, pixels: gray }
+}
+
+/**
  * Shrink a grayscale picture by an integer factor, averaging each block.
  *
  * Why bother: locating a symbol scans every pixel, and a 1080p frame is two

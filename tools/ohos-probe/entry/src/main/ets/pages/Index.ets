@@ -11,6 +11,7 @@ import { NoiseIkSession, createNoisePrologue } from '../core/noise'
 import { decodeTicket, encodeTicket } from '../core/pairing'
 import { describeTicket, readTicketText, remainingLabel, ticketRemainingMs } from '../core/pairing_text'
 import { ClientCheckResult, runClientCheck, runPlatformCheck, runQrCheck } from '../selfcheck'
+import { ScanOutcome, scanTicketWithCamera } from '../scan_camera.ohos'
 import router from '@ohos.router'
 import type { Context } from '@kit.AbilityKit'
 import pasteboard from '@ohos.pasteboard'
@@ -68,6 +69,9 @@ struct Index {
         .fontSize(11)
         .onChange((value: string) => { this.ticketText = value; this.checkTicket(value) })
       Row({ space: 8 }) {
+        Button('扫二维码')
+          .layoutWeight(1)
+          .onClick(() => { this.scanTicket() })
         Button('从剪贴板读取')
           .layoutWeight(1)
           .onClick(() => { this.pasteTicket() })
@@ -155,7 +159,32 @@ struct Index {
     this.ticketWhere = `${describeTicket(read.ticket, now)} · ${remainingLabel(ticketRemainingMs(read.ticket, now))}`
   }
 
-  /** 从系统剪贴板取一段文字当配对码。鸿蒙侧没有条码扫描接口，粘贴是唯一入口。 */
+  /**
+   * 拍一张照片，从里面解出配对码。
+   *
+   * 解出来的码要先过 `checkTicket` 再落进输入框：照片里可能是任意二维码，
+   * 而「解出来了但不是配对码」和「解出来了但过期了」得说成两种话。
+   */
+  private scanTicket(): void {
+    this.ticketNote = ''
+    this.summary = '正在打开相机…'
+    this.detail = ''
+    const context = this.getUIContext().getHostContext() as Context
+    scanTicketWithCamera(context).then((outcome: ScanOutcome) => {
+      this.summary = outcome.message
+      if (!outcome.ok) {
+        this.ticketNote = outcome.message
+        return
+      }
+      this.ticketText = outcome.ticketText
+      this.checkTicket(this.ticketText)
+    }).catch((error: Object) => {
+      this.summary = '扫码失败'
+      this.ticketNote = '' + error
+    })
+  }
+
+  /** 从系统剪贴板取一段文字当配对码。鸿蒙侧没有条码扫描接口，粘贴是兜底入口。 */
   private pasteTicket(): void {
     try {
       const board = pasteboard.getSystemPasteboard()

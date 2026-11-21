@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1100 KB，内含 `ets/modules.abc` 684,664 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1141 KB，内含 `ets/modules.abc` 693,296 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -432,13 +432,47 @@ v3-M 单块、v5-M 两块交织，版本分支与块交织都会被走到），�
 **测试要真的把图转起来**，`renderScene` 用逆向映射渲染（场景像素 → 模块坐标），所以旋转、
 小数倍模块像素、右下角渐暗这三件事是同时发生在一张图上的，改小任何一件都会让这个 bug 藏回去。
 
+## 扫码这条路：从「没有接口」到「能拍一张就出配对码」
+
+鸿蒙 SDK 里没有条码识别接口（`@ohos.scan` 是打印扫描仪；50 个 kit 里没有 ScanKit/VisionKit；
+`@ohos.multimedia.camera` 的 `MetadataBarcodeObject` 是个空接口，只给你位置类型不给你内容），
+所以「扫码配对」这件事只能自己从像素往上做完。这条链分三段，每段都是本仓库自己写的：
+
+| 段 | 文件 | 做什么 |
+| --- | --- | --- |
+| 取像素 | `scan_camera.ohos.ts` | `cameraPicker.pick` 调系统相机拍一张 → `fileIo` 读文件 → `image.createPixelMap(RGBA_8888)` → `readPixelsToBuffer` |
+| 像素 → 矩阵 | `core/qr/frame.ts` + `core/qr/scan.ts` | RGBA 按 BT.601 转灰度、按 `stride` 跳过行填充、Otsu 二值化、找三个定位图案、仿射采样 |
+| 矩阵 → 文本 | `core/qr/decode.ts` | 格式位、版本、去交织、Reed-Solomon 纠错、载荷解析 |
+
+**为什么先走「拍一张」而不是自己拉预览流**：连续扫码要 `XComponent` + 预览输出 + `ImageReceiver`
+三样一起配，而它们没有一样能在没有真机的情况下验证 —— 写了也只是猜测。`cameraPicker` 是官方
+给的「App 申请拍照」入口，返回一个文件 URI，之后就是纯粹的图片解码，每一步都能在电脑上用 Node
+先跑通。代价是用户要按两次快门；换来的是这条路现在**真的能跑**，不是一段没法验证的预览流代码。
+
+`cameraPicker` 本身**不需要声明任何权限**（`@ohos.multimedia.cameraPicker.d.ts` 里一条
+`@permission` 都没有），拍照由系统相机 App 负责，所以 `module.json5` 什么都没加。
+
+两个具体教训：
+
+- **`image.createPixelMap` 解成 RGBA 而不是 YUV**。拍照只发生一次，解成 RGBA 多花的那点内存
+  无所谓；换成 YUV 就得自己处理三个平面各自的 `rowStride`/`pixelStride`，而这条路已经由
+  `grayFromLuma` 覆盖（连续扫码时才需要它）。
+- **`rowStride` 在 RGBA 里是「像素」不是「字节」**。鸿蒙的 `ImageInfo.stride` 按像素报，
+  而同一套代码里 `LumaFrame.rowStride` 按字节 —— 两个单位混起来不会报错，只会让整张图斜切，
+  表现就是「找不到二维码」。`grayFromRgba` 的注释里写明了这一点，单测里也有一条专门喂
+  宽 stride + 白色填充的用例（填充必须被跳过，否则黑色像素会变白）。
+
+解码失败时界面要给三种不同的说法，因为三件事的修法完全不同：「打不开相机」（权限/设备问题）、
+「这张照片里没找到二维码」+ 半分辨率与原分辨率各自的原因、「二维码解出来了，但不是配对码」
++ 解出来内容的前 40 字（用户可能是拍到了商品码或者海报）。
+
 ## 二期路线建议
 
 1. 把这份 HAP 旁加载到真机，确认 `@ohos.net.socket` 与 `@ohos.net.webSocket` 在真机上能连（模拟器与真机的网络栈不同）。
-2. 把 `runQrCheck` 从「三张硬编码金标」推进到真的相机取帧：`@ohos.multimedia.camera` 的
-   `imageReceiver` 回调里拿 YUV 帧、只取 Y 平面转灰度、喂 `matrixFromImage`。**这条路的两个
-   难点已经有现成答案**：`frame.ts` 的 `grayFromLuma` 处理 `rowStride`/`pixelStride`（当紧密
-   排列读会把图剪斜，看着就是「解不出」）、`scan.ts` 的 `locateFrame` 处理非轴对齐，两者都
-   已在自己的单测里钉住。剩下的是帧格式对接与节流：每帧都全图找定位图案太贵，先用
-   `shrinkGray` 降一半再扫，扫不到才回全分辨率。
+2. 把扫码从「拍一张」推进到「对着码就出结果」：现在走 `cameraPicker`（系统相机 App 拍一张，
+   App 拿回文件再解码），好处是不用自己拉预览流、每一步都能在电脑上先测；代价是用户要按两次快门。
+   要连续扫，就得用 `@ohos.multimedia.camera` 的 `imageReceiver` 拿 YUV 帧、只取 Y 平面
+   （`grayFromLuma` 已经处理 `rowStride`/`pixelStride`）、喂 `matrixFromFrame`。**这条路的两个
+   难点已经有现成答案**：`scan.ts` 的 `locateFrame` 处理非轴对齐，`shrinkGray` 负责先把帧降一半
+   再扫（每帧全分辨率找定位图案太贵）。剩下的是帧格式对接与节流，以及一个真机测试台。
 3. 把设备私钥迁到 Asset Store Kit。
