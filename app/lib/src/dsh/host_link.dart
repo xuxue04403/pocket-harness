@@ -81,6 +81,63 @@ class AgentPreset {
   }
 }
 
+/// Filters sessions by a lowercase needle against the title and the directory.
+///
+/// The Host hands the whole session list over at once, so this is what makes
+/// hundreds of sessions navigable even when the deployment disables the Host's
+/// own content index. It lives beside the model rather than inside the page so
+/// the matching rules can be tested without a widget tree.
+List<SessionSummary> filterSessions(List<SessionSummary> sessions, String query) {
+  final needle = query.trim().toLowerCase();
+  if (needle.isEmpty) return const [];
+  return sessions
+      .where(
+        (session) =>
+            session.title.toLowerCase().contains(needle) ||
+            (session.cwd?.toLowerCase().contains(needle) ?? false),
+      )
+      .toList();
+}
+
+/// One session whose message content matched a search.
+class SessionHit {
+  const SessionHit({required this.sessionId, required this.snippet});
+
+  final String sessionId;
+
+  /// The matching text, as the Host excerpted it.
+  final String snippet;
+
+  static SessionHit? fromJson(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    final id = value['sessionId'];
+    final snippet = value['snippet'];
+    if (id is! String || id.isEmpty) return null;
+    return SessionHit(sessionId: id, snippet: snippet is String ? snippet : '');
+  }
+}
+
+/// What one search returned, including whether the Host truncated it.
+class SessionSearchResult {
+  const SessionSearchResult({this.hits = const [], this.hasMore = false});
+
+  final List<SessionHit> hits;
+
+  /// True when more sessions matched than the Host was willing to return.
+  final bool hasMore;
+
+  static SessionSearchResult fromJson(Map<String, Object?> value) {
+    final items = value['items'];
+    if (items is! List) return const SessionSearchResult();
+    final hits = <SessionHit>[];
+    for (final item in items) {
+      final hit = SessionHit.fromJson(item);
+      if (hit != null) hits.add(hit);
+    }
+    return SessionSearchResult(hits: hits, hasMore: value['hasMore'] == true);
+  }
+}
+
 /// One model the Host can route to.
 class ModelChoice {
   const ModelChoice({
@@ -483,6 +540,20 @@ class HostLink {
       if (preset != null) presets.add(preset);
     }
     return presets;
+  }
+
+  /// Searches message content across every session.
+  ///
+  /// A Host with hundreds of sessions cannot be browsed by scrolling, and the
+  /// list is ordered by activity, so anything older than the first screenful is
+  /// effectively unreachable without this. The Host caps the result at 20 and
+  /// reports whether more matched, so the UI says so rather than pretending the
+  /// list is complete.
+  Future<SessionSearchResult> search(String query) async {
+    final value = await _client.rpc.call('session/search', {
+      'request': {'query': query},
+    });
+    return SessionSearchResult.fromJson(value);
   }
 
   /// Follows one session, yielding the opening snapshot and then live frames.

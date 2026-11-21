@@ -5,6 +5,7 @@ import '../dsh/host_link.dart';
 import '../storage/host_store.dart';
 import 'chat_page.dart';
 import 'new_session_sheet.dart';
+import 'search_page.dart';
 
 /// Connects to one Host and lists its sessions.
 ///
@@ -30,6 +31,9 @@ class _SessionsPageState extends State<SessionsPage> {
   /// path each time is the common annoyance this removes.
   String? _lastCwd;
 
+  /// The last list the Host returned, so the search page can name its hits.
+  List<SessionSummary> _loaded = const [];
+
   @override
   void initState() {
     super.initState();
@@ -54,6 +58,9 @@ class _SessionsPageState extends State<SessionsPage> {
         _link = link;
       });
       final sessions = await link.sessions();
+      // Kept for the search page, which labels a hit with the title a person
+      // knows rather than a session id.
+      _loaded = sessions;
       for (final session in sessions) {
         if (session.cwd != null && session.cwd!.isNotEmpty) {
           _lastCwd = session.cwd;
@@ -120,6 +127,32 @@ class _SessionsPageState extends State<SessionsPage> {
     if (mounted) _refresh();
   }
 
+  Future<void> _search() async {
+    final link = _link;
+    if (link == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SearchPage(
+          sessions: _loaded,
+          contentSearch: link.search,
+          onOpen: (sessionId, title) => _openFromSearch(context, sessionId, title),
+        ),
+      ),
+    );
+  }
+
+  /// Opens a hit from the search page, which stays below it in the stack.
+  Future<void> _openFromSearch(BuildContext context, String sessionId, String title) async {
+    final link = _link;
+    if (link == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatPage(link: link, sessionId: sessionId, title: title),
+      ),
+    );
+    if (mounted) _refresh();
+  }
+
   @override
   void dispose() {
     final link = _link;
@@ -152,6 +185,11 @@ class _SessionsPageState extends State<SessionsPage> {
             onPressed: _link == null ? null : _create,
             icon: const Icon(Icons.add_comment_outlined),
             tooltip: '新建会话',
+          ),
+          IconButton(
+            onPressed: _link == null ? null : _search,
+            icon: const Icon(Icons.search),
+            tooltip: '搜索会话内容',
           ),
           IconButton(
             onPressed: _refresh,

@@ -389,4 +389,71 @@ void _questionTests() {
       expect(AgentPreset.fromJson('lean'), isNull);
     });
   });
+
+  group('session search', () {
+    test('reads hits and the truncation flag', () {
+      final result = SessionSearchResult.fromJson({
+        'items': [
+          {'sessionId': 'abcdefgh-1234-7abc-8def-0123456789ab', 'snippet': '数到 40'},
+          {'sessionId': 'ijklmnop-1234-7abc-8def-0123456789ab', 'snippet': '接入 LibreXTV'},
+        ],
+        'hasMore': true,
+      });
+      expect(result.hits, hasLength(2));
+      expect(result.hits.first.snippet, '数到 40');
+      expect(result.hasMore, isTrue);
+    });
+
+    test('drops hits without a usable session id', () {
+      final result = SessionSearchResult.fromJson({
+        'items': [
+          {'snippet': 'no id at all'},
+          {'sessionId': '', 'snippet': 'empty id'},
+          {'sessionId': 'abcdefgh-1234-7abc-8def-0123456789ab'},
+        ],
+      });
+      expect(result.hits, hasLength(1));
+      expect(result.hits.single.snippet, isEmpty);
+      expect(result.hasMore, isFalse);
+    });
+
+    test('treats a missing item list as no matches', () {
+      expect(SessionSearchResult.fromJson(const {}).hits, isEmpty);
+      expect(SessionSearchResult.fromJson(const {'items': 'nope'}).hits, isEmpty);
+    });
+  });
+
+  group('filterSessions', () {
+    final sessions = [
+      _summary('a', '重写UU远程重构方案', r'D:\IDE\UU'),
+      _summary('b', 'Count to 40', r'D:\IDE\dsh-bot'),
+      _summary('c', 'LibreXTV 接入与后续任务', null),
+    ];
+
+    test('matches the title regardless of case', () {
+      expect(filterSessions(sessions, 'count').map((s) => s.sessionId), ['b']);
+      expect(filterSessions(sessions, 'librextv').map((s) => s.sessionId), ['c']);
+    });
+
+    test('matches the working directory too', () {
+      expect(filterSessions(sessions, r'ide\uu').map((s) => s.sessionId), ['a']);
+      expect(filterSessions(sessions, 'dsh-bot').map((s) => s.sessionId), ['b']);
+    });
+
+    test('never matches on an empty query', () {
+      expect(filterSessions(sessions, '   '), isEmpty);
+    });
+
+    test('tolerates a session with no directory', () {
+      expect(filterSessions(sessions, 'librextv').single.cwd, isNull);
+    });
+  });
 }
+
+SessionSummary _summary(String id, String title, String? cwd) => SessionSummary(
+      sessionId: id,
+      title: title,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
+      running: false,
+      cwd: cwd,
+    );
