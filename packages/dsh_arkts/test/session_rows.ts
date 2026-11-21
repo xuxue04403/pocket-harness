@@ -1,0 +1,111 @@
+// 会话行的解析与排序。
+//
+// 这几条规则全部来自对真实 Host 的观察：主键叫 sessionId、标题在 projections 里、
+// projections 可能缺失、800 多个会话没有分页。每一条都写进断言，因为界面上
+// 出错时最难判断的就是「是数据形状变了还是界面写错了」。
+
+import { readSessionRow, readSessionRows, sortSessionRows, UNTITLED_SESSION, type SessionRow } from '../src/session_rows'
+import type { JsonObject } from '../src/json'
+
+const failures: string[] = []
+
+function ok(label: string, condition: boolean, detail = ''): void {
+  if (condition) {
+    console.log(`  ok   ${label}`)
+    return
+  }
+  failures.push(label)
+  console.log(`  FAIL ${label}${detail === '' ? '' : ` — ${detail}`}`)
+}
+
+function same(label: string, actual: Object, expected: Object): void {
+  const left = JSON.stringify(actual)
+  const right = JSON.stringify(expected)
+  ok(label, left === right, `got ${left}, expected ${right}`)
+}
+
+function checkRows(): void {
+  // 完整形状：标题在 projections.values.title，目录在顶层 cwd。
+  const full: JsonObject = {
+    sessionId: 'session-a',
+    updatedAt: 1_700_000_000_000,
+    running: true,
+    cwd: 'D:\\work',
+    projections: { values: { title: 'Refactor the runner', agentPreset: 'lean' } },
+  }
+  const row = readSessionRow(full)
+  ok('a full record is read', row !== null)
+  if (row !== null) {
+    ok('the key is sessionId', row.sessionId === 'session-a')
+    ok('the title comes from projections', row.title === 'Refactor the runner', row.title)
+    ok('the directory is preferred over the timestamp', row.detail === 'D:\\work', row.detail)
+    ok('the running flag is read', row.running)
+    ok('the timestamp is kept', row.updatedAt === 1_700_000_000_000)
+  }
+
+  // 没有标题：用占位文案，不是空字符串。
+  const untitled = readSessionRow({
+    sessionId: 'session-b',
+    updatedAt: 1_700_000_000_000,
+    cwd: 'D:\\work\\untitled',
+  })
+  ok('a session without a title still renders', untitled !== null && untitled.title === UNTITLED_SESSION)
+
+  // 没有 cwd：退回相对时间。
+  const noCwd = readSessionRow({ sessionId: 'session-c', updatedAt: Date.now() - 30_000 })
+  ok('a session without a directory shows when it moved', noCwd !== null && noCwd.detail === '刚刚')
+
+  // 没有 sessionId：无法定位，直接丢弃。
+  ok('a record without a session id is dropped', readSessionRow({ title: 'orphan' }) === null)
+
+  // projections 存在但 values 缺失，不能抛错。
+  const noValues = readSessionRow({ sessionId: 'session-d', projections: { asOfSeq: 3 } })
+  ok('projections without values do not throw', noValues !== null && noValues.title === UNTITLED_SESSION)
+
+  // projections 是 null（Host 可能给 null）。
+  const nullProjections = readSessionRow({ sessionId: 'session-e', projections: null })
+  ok('a null projections bag does not throw', nullProjections !== null)
+
+  // 列表层：跳过非对象与坏条目。
+  const list: JsonObject = {
+    items: [
+      { sessionId: 'one', updatedAt: 1 },
+      null,
+      'not an object',
+      { title: 'no id' },
+      { sessionId: 'two', updatedAt: 2 },
+    ],
+  }
+  const rows = readSessionRows(list)
+  same('only readable rows survive', rows.map((r: SessionRow): string => r.sessionId), ['one', 'two'])
+
+  ok('a response without items is empty', readSessionRows({}).length === 0)
+}
+
+function checkSort(): void {
+  const rows: SessionRow[] = [
+    { sessionId: 'old', title: 'old', detail: '', running: false, updatedAt: 100 },
+    { sessionId: 'idle-new', title: 'new', detail: '', running: false, updatedAt: 900 },
+    { sessionId: 'live-old', title: 'live', detail: '', running: true, updatedAt: 10 },
+  ]
+  const sorted = sortSessionRows(rows)
+  same(
+    'running comes first, then newest',
+    sorted.map((row: SessionRow): string => row.sessionId),
+    ['live-old', 'idle-new', 'old'],
+  )
+  same('the input order is not mutated', rows.map((row: SessionRow): string => row.sessionId), ['old', 'idle-new', 'live-old'])
+}
+
+function main(): void {
+  console.log('session rows')
+  checkRows()
+  checkSort()
+  if (failures.length > 0) {
+    console.log(`\n${failures.length} SESSION ROW CHECK(S) FAILED`)
+    process.exit(1)
+  }
+  console.log('\nALL SESSION ROW CHECKS PASS (typescript core)')
+}
+
+main()

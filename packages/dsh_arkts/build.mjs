@@ -7,4 +7,5 @@ await build({ ...shared, entryPoints: ['test/vectors.ts'], outfile: 'build/vecto
 await build({ ...shared, entryPoints: ['test/protocol.ts'], outfile: 'build/protocol.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/framing.ts'], outfile: 'build/framing.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/client.ts'], outfile: 'build/client.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/session_rows.ts'], outfile: 'build/session_rows.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live.ts'], outfile: 'build/live.mjs', platform: 'node', target: 'es2022' })

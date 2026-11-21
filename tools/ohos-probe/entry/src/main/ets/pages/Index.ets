@@ -10,6 +10,9 @@ import { x25519PublicKey } from '../core/curve25519'
 import { NoiseIkSession, createNoisePrologue } from '../core/noise'
 import { decodeTicket, encodeTicket } from '../core/pairing'
 import { ClientCheckResult, runClientCheck, runPlatformCheck } from '../selfcheck'
+import router from '@ohos.router'
+import type { Context } from '@kit.AbilityKit'
+import { HostStore } from '../storage.ohos'
 
 function hex(bytes: Uint8Array): string {
   let out = ''
@@ -64,6 +67,9 @@ struct Index {
       Button('用系统随机数与 TCP 连过去')
         .width('80%')
         .onClick(() => { this.runPlatform() })
+      Button('保存配对码并打开会话列表')
+        .width('80%')
+        .onClick(() => { this.openSessions() })
     }
     .padding(20)
     .width('100%')
@@ -92,6 +98,25 @@ struct Index {
       this.summary = '真实链路失败'
       this.detail = '' + error
     })
+  }
+
+  private async openSessions(): Promise<void> {
+    if (this.ticketText.length === 0) {
+      this.summary = '请先粘贴配对码'
+      this.detail = ''
+      return
+    }
+    try {
+      decodeTicket(this.ticketText)
+    } catch (error) {
+      this.summary = '配对码读不出来'
+      this.detail = '' + error
+      return
+    }
+    const context = this.getUIContext().getHostContext() as Context
+    const store = await HostStore.open(context)
+    await store.saveTicket(decodeTicket(this.ticketText))
+    await router.pushUrl({ url: 'pages/Sessions', params: { ticketText: this.ticketText } })
   }
 
   private runOnce(): void {

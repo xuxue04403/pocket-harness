@@ -30,18 +30,18 @@ export function encodeJsonBytes(value: JsonObject): Uint8Array {
   return utf8(JSON.stringify(value))
 }
 
-/** 取字符串字段；类型不符时当作缺失。 */
-export function stringField(source: JsonObject, key: string): string | undefined {
-  if (!(key in source)) return undefined
+/** 取字符串字段；类型不符时返回 `fallback`。 */
+export function stringField(source: JsonObject, key: string, fallback: string = ''): string {
+  if (!(key in source)) return fallback
   const value = source[key]
-  return typeof value === 'string' ? (value as string) : undefined
+  return typeof value === 'string' ? (value as string) : fallback
 }
 
-/** 取数字字段；类型不符时当作缺失。 */
-export function numberField(source: JsonObject, key: string): number | undefined {
-  if (!(key in source)) return undefined
+/** 取数字字段；类型不符时返回 `fallback`。 */
+export function numberField(source: JsonObject, key: string, fallback: number = 0): number {
+  if (!(key in source)) return fallback
   const value = source[key]
-  return typeof value === 'number' ? (value as number) : undefined
+  return typeof value === 'number' ? (value as number) : fallback
 }
 
 /** 取布尔字段；只有真正的 `true` 才算真。 */
