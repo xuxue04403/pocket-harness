@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（846 KB，内含 `ets/modules.abc` 528,656 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（916 KB，内含 `ets/modules.abc` 579,492 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -354,6 +354,24 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 的默认状态不同 —— 技能面板是「点了才出现」的挑选器，空输入时没什么可选；会话列表是
 一打开就在那儿的全部内容，空输入时必须还是全部，否则一进页面就空白。这条差异在
 `test/session_rows.ts` 里专门有一条断言守着，防止以后被"统一"掉。
+
+### 后台任务：一条不会结束的流
+
+`job/list` 是**流**，首帧就是整集 `{type:"rows", jobs:[...]}`，而且之后**流不结束**。所以
+只能取第一帧；等 `done` 会永远等下去。手机上做的是每 5 秒重取一次第一帧，而不是订一条
+永不结束的流 —— 这一页是看一眼就走的，秒级同步没有意义，轮询让代码少一层状态。
+
+`job/follow` 相反，它回 `opened` → 若干 `output` → `status` 后**自己结束**，所以可以
+一路读到 `done`。`output` 帧里的 `chunks[]` 要按顺序把 `text` 拼起来；`lossy: true` 表示
+中间有一段输出已经被电脑丢掉（超过它保留的上限），界面必须说出来，否则会让人以为命令
+只输出了这么点。
+
+`job/kill` 对**已经结束**的任务回 `{outcome:"already-finished"}` 而不是报错。所以界面
+不能说「已终止」，要说「这个任务在你说之前就已经结束了」。这条差别只有真 Host 会告诉你，
+`test/jobs.ts` 与 `test/live_jobs.ts` 各钉了一半。
+
+**不要在同一个会话里验证「杀活任务」**：那个「运行中」的任务很可能就是当前会话自己的工具
+调用，杀它等于把自己掐断。我只对已经结束的任务验证过终止路径。
 
 ## 二期路线建议
 

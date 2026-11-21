@@ -934,6 +934,16 @@ struct Chat {
               params: { ticketText: this.ticketText, sessionId: this.sessionId },
             })
           })
+        Text('后台任务')
+          .fontSize(12)
+          .fontColor('#0A7A4F')
+          .decoration({ type: TextDecorationType.Underline, color: '#0A7A4F' })
+          .onClick(() => {
+            router.pushUrl({
+              url: 'pages/Jobs',
+              params: { ticketText: this.ticketText, sessionId: this.sessionId },
+            })
+          })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })

@@ -36,10 +36,11 @@
 | `src/composer.ts` | 发出去的内容块：标准 base64（不是 url 变体）、类型白名单、空 content 必须拦住 |
 | `src/images.ts` | 收回来的图片引用：只认 `attachment`、字节另取、标准 base64 解码 |
 | `src/pairing_text.ts` | 从一整行日志里挑出配对码、判真伪、写成一句可核对的话 |
+| `src/jobs.ts` | 后台任务：`job/list` 是不结束的整集流、`follow` 三段式、`kill` 对已结束任务不报错 |
 
 ## 为什么能信
 
-`npm test` 跑十七套断言：
+`npm test` 跑十八套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -95,8 +96,13 @@
 17. **`test/pairing_text.ts`** —— 配对码的脏输入：整行日志、带引号、带行尾
     标点、只复制一半、两个码连着贴。找得到与读得出是两件事：找不到时说「以
     `pocketharness://pair?t=` 开头」，读不出时说清是复制截断还是码被改过。
+18. **`test/jobs.ts`** —— 后台任务：`job/list` 是**不会结束的整集流**（只能取第一帧）、
+    `follow` 的 `opened`/`output`/`status` 三段、`output` 帧要把 `chunks[].text` 拼起来、
+    `lossy` 表示中间丢过输出、**`job/kill` 对已结束的任务回 `already-finished` 而不是报错**
+    （所以界面要说「已经结束了」，不能假装终止成功）、认不出的状态原样显示而不是写「未知」、
+    `startedAt` 缺失时不显示「0 秒」。
 
-`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做九件事：
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做十件事：
 
 1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
    数学正确，而是「这份代码能跟真正的 Host 说话」。
@@ -128,6 +134,9 @@
    图片引用（不是字节）、用 `session/attachment` 取回的 base64 与发出去的完全一致。
    这一步证明的正是「手机上选一张图，电脑真的能看见」。测试会话会留在电脑上，是
    这条链路唯一会留下痕迹的地方。
+10. 扫最多 40 个会话找有任务的，取 `job/list` 的**第一帧**，再对一个**已经结束**的任务
+    试 `job/kill`，确认回的是 `already-finished`。这里故意不杀活任务：那个「运行中」
+    的任务很可能就是当前会话自己的工具调用，杀掉它等于把自己掐断。
 
 ## 在鸿蒙工程里怎么用
 

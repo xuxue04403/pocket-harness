@@ -3,7 +3,8 @@
     "pages/Index",
     "pages/Sessions",
     "pages/Chat",
+    "pages/Files",
     "pages/Settings",
-    "pages/Files"
+    "pages/Jobs"
   ]
 }
