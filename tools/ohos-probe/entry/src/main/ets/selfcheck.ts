@@ -19,7 +19,9 @@ import { FRAME_KIND, decodeFrame, encodeEnvelope, encodeFrame, responseEnvelope 
 import { LinkClient, LinkRefusedError } from './core/client'
 import type { JsonObject } from './core/json'
 import { decodeMatrix } from './core/qr/decode'
+import { grayFromLuma } from './core/qr/frame'
 import { matrixFromImage } from './core/qr/sampler'
+import { matrixFromFrame } from './core/qr/scan'
 import { QR_SAMPLES } from './qr_samples'
 import { openTcpTransport, systemRandom } from './platform.ohos'
 
@@ -238,6 +240,59 @@ export function runQrCheck(): ClientCheckResult {
     lines.push('ok 灰度图 ' + imageSide + 'px 解回同一张码')
   } catch (error) {
     return { ok: false, summary: '灰度图定位抛错', detail: '' + error }
+  }
+
+  // 相机帧不是渲染图：模块落在非整数像素上、整张码还会歪，而且相机给的亮度平面
+  // 是**带行填充的**。这里把一张样本按「每模块 4.7 像素、绕中心转 20 度、右下角
+  // 渐暗」渲染成 320×320 的场景，每行再留 16 字节填充，走
+  // 亮度平面 → 灰度 → 定位 → 仿射采样 → 解码 的完整路径。
+  // 这一步钉住过一个真实缺陷：横向行程在旋转后被拉长 1/cosθ，不除掉就会把尺寸
+  // 认成小一号的版本。填充这一层也常错：按紧密排列读会把图剪斜，看着就是「解不出」。
+  try {
+    const sample = QR_SAMPLES[1]
+    const size = sample.rows.length
+    const side = 320
+    const padding = 16
+    const rowStride = side + padding
+    const modulePixels = 4.7
+    const radians = (20 * Math.PI) / 180
+    const cos = Math.cos(radians)
+    const sin = Math.sin(radians)
+    const span = size * modulePixels
+    const centre = side / 2
+    const luma = new ArrayBuffer(rowStride * side)
+    const plane = new Uint8Array(luma)
+    for (let y = 0; y < side; y += 1) {
+      for (let x = 0; x < side; x += 1) {
+        const dx = x - centre
+        const dy = y - centre
+        const rx = dx * cos + dy * sin
+        const ry = -dx * sin + dy * cos
+        const u = (rx + span / 2) / modulePixels
+        const v = (ry + span / 2) / modulePixels
+        let level = 255
+        if (u >= 0 && v >= 0 && u < size && v < size) {
+          const black = sample.rows[Math.floor(v)].charAt(Math.floor(u)) === '1'
+          level = black ? 24 : 231
+        }
+        const shade = 1 - (0.4 * (x + y)) / (2 * side)
+        plane[y * rowStride + x] = Math.floor(level * shade)
+      }
+    }
+    const gray = grayFromLuma({ luma: luma, width: side, height: side, rowStride: rowStride, pixelStride: 1 })
+    if (gray.width !== side || gray.pixels.length !== side * side) {
+      return { ok: false, summary: '亮度平面转灰度时尺寸不对', detail: gray.width + '×' + gray.pixels.length }
+    }
+    const tilted = decodeMatrix(matrixFromFrame(gray))
+    if (tilted.text !== sample.text) {
+      return { ok: false, summary: '歪着的相机帧里认不出二维码', detail: sample.label + ' → ' + tilted.text }
+    }
+    if (tilted.version !== sample.version) {
+      return { ok: false, summary: '歪着的相机帧把版本认错了', detail: sample.label + ' → v' + tilted.version }
+    }
+    lines.push('ok 带 ' + padding + ' 字节行填充、转 20 度的 320px 场景解回同一张码（v' + tilted.version + '）')
+  } catch (error) {
+    return { ok: false, summary: '相机帧路径抛错', detail: '' + error }
   }
 
   const elapsed = Date.now() - started

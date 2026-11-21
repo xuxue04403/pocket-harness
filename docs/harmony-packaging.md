@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1048 KB，内含 `ets/modules.abc` 656,344 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1100 KB，内含 `ets/modules.abc` 684,664 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -399,9 +399,11 @@ zig-zag 取码字、去交织、按版本分档的载荷解析（numeric/alnum/b
 一个灰度图 → 矩阵的采样器。**不依赖任何第三方库**，因为鸿蒙工程里引一个 npm 包同样要过
 ArkTS 编译器，而纯整数运算恰恰是跨引擎最容易偏的地方 —— 自己写、自己钉金标，反而更稳。
 
-范围划得很清楚：**只处理轴对齐、整像素模块的图**。这正好覆盖真实场景 —— 配对码是电脑
-屏幕上渲染出来的二维码，相机对着屏幕时只要不歪就是轴对齐的。拍照的透视变换、倾斜、模糊
-不在范围内：本项目没有测试台，写一个测不了的几何校正只会把「有时候能扫」伪装成「支持扫码」。
+范围划得很清楚：`sampler.ts` **只处理轴对齐、整像素模块的图**，这正好覆盖「电脑屏幕上渲染出来的
+配对码」。真实相机帧不是这样 —— 码在场景某处、模块落在非整数像素上、画面还常常是歪的 —— 所以
+另有一条 `scan.ts`：Otsu 阈值（不写死 128，屏幕暗一点就不会全黑）、按 1:1:3:1:1 的行程找三个
+定位图案、用三个中心解仿射映射后逐模块采样。仿射能吃掉旋转与缩放，吃不掉**透视**（斜着拍），
+那需要单应性；这一条同样不在范围内，理由和上面一样：没有测试台就不假装支持。
 
 四条金标由 `packages/dsh_arkts/tools/gen_qr_fixtures.mjs` 用 node-qrcode 生成，落盘成
 `probe/qr_fixtures.json`（125,800 字节，含矩阵与灰度像素两组数据），再用 jsQR 独立解一遍
@@ -420,10 +422,23 @@ v3-M 单块、v5-M 两块交织，版本分支与块交织都会被走到），�
 `decodeMatrix`、`matrixFromImage`、`readFormat`、`generatorPolynomial`、`deinterleave`、
 `countBits`、`locateSymbol`、`sampleSymbol`。
 
+### 相机帧这条路上钉住的一个真实缺陷
+
+`scan.ts` 的第一版在 4 度、12 度旋转下都能解回原文，27 度就抛 `ReedSolomonError`。原因是
+**模块边长是从横向行程量出来的，而旋转会把每一段行程拉长 1/cosθ**：27 度时量出来偏大 12%，
+`round(间距/边长) + 7` 于是算出小一号的尺寸（33 而不是 37），后面每个模块都采样到邻格。
+修法不是调容差，而是把测量值乘上「符号自身的 x 轴在图像 x 轴上的投影」`|Δx| / 间距`。
+两个教训：一是**容差型参数掩盖几何错误**（放宽 tolerance 只会让 27 度偶尔碰巧通过）；二是
+**测试要真的把图转起来**，`renderScene` 用逆向映射渲染（场景像素 → 模块坐标），所以旋转、
+小数倍模块像素、右下角渐暗这三件事是同时发生在一张图上的，改小任何一件都会让这个 bug 藏回去。
+
 ## 二期路线建议
 
 1. 把这份 HAP 旁加载到真机，确认 `@ohos.net.socket` 与 `@ohos.net.webSocket` 在真机上能连（模拟器与真机的网络栈不同）。
 2. 把 `runQrCheck` 从「三张硬编码金标」推进到真的相机取帧：`@ohos.multimedia.camera` 的
-   `imageReceiver` 回调里拿 YUV 帧、只取 Y 平面转灰度、喂 `matrixFromImage`。解码器本身已经
-   在设备运行时里验证过，剩下的是帧格式与采样节流（每帧都全图找定位图案太贵，先降采样）。
+   `imageReceiver` 回调里拿 YUV 帧、只取 Y 平面转灰度、喂 `matrixFromImage`。**这条路的两个
+   难点已经有现成答案**：`frame.ts` 的 `grayFromLuma` 处理 `rowStride`/`pixelStride`（当紧密
+   排列读会把图剪斜，看着就是「解不出」）、`scan.ts` 的 `locateFrame` 处理非轴对齐，两者都
+   已在自己的单测里钉住。剩下的是帧格式对接与节流：每帧都全图找定位图案太贵，先用
+   `shrinkGray` 降一半再扫，扫不到才回全分辨率。
 3. 把设备私钥迁到 Asset Store Kit。

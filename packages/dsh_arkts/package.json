@@ -6,7 +6,7 @@
   "description": "Pocket Harness 协议核心的 TypeScript 版本：同一份源码供鸿蒙 ArkTS 与 Node 金标测试使用。",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && node build/vectors.mjs && node build/protocol.mjs && node build/framing.mjs && node build/client.mjs && node build/session_rows.mjs && node build/transcript.mjs && node build/relay_protocol.mjs && node build/relay_contract.mjs && node build/questions.mjs && node build/models.mjs && node build/agent_presets.mjs && node build/skills.mjs && node build/settings.mjs && node build/workspace.mjs && node build/composer.mjs && node build/images.mjs && node build/pairing_text.mjs && node build/jobs.mjs && node build/todos.mjs && node build/qr_rs.mjs && node build/qr_fixtures.mjs",
+    "test": "node build.mjs && node build/vectors.mjs && node build/protocol.mjs && node build/framing.mjs && node build/client.mjs && node build/session_rows.mjs && node build/transcript.mjs && node build/relay_protocol.mjs && node build/relay_contract.mjs && node build/questions.mjs && node build/models.mjs && node build/agent_presets.mjs && node build/skills.mjs && node build/settings.mjs && node build/workspace.mjs && node build/composer.mjs && node build/images.mjs && node build/pairing_text.mjs && node build/jobs.mjs && node build/todos.mjs && node build/qr_rs.mjs && node build/qr_fixtures.mjs && node build/qr_scan.mjs",
     "test:live": "node build.mjs && node build/live.mjs && node build/live_transcript.mjs && node build/live_relay.mjs && node build/live_models.mjs && node build/live_presets.mjs && node build/live_skills.mjs && node build/live_settings.mjs && node build/live_workspace.mjs && node build/live_composer.mjs && node build/live_jobs.mjs && node build/live_todos.mjs"
   },
   "devDependencies": {
