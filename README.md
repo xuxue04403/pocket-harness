@@ -2,6 +2,8 @@
 
 用手机操控跑在电脑上的 DeepSeek Harness，链路端到端加密。
 
+**当前版本：v0.1.0-beta**（范围只有「远程操控电脑」，更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+
 工作区、智能体运行时与会话历史全部留在电脑上，手机只是一扇窗：扫一次码完成配对，之后就能在外面列会话、读记录、发提示词——同一个局域网里直连，跨网络时走你自己部署的中继。
 
 数据不经过任何第三方服务器。没有账号体系，没有托管的中转，也没有遥测。
@@ -25,7 +27,7 @@
 |---|---|
 | 配对（扫码 / 粘贴配对码） | ✅ 一次性携带公钥与端点，天然 TOFU |
 | 局域网直连 | ✅ TCP + Noise IK |
-| 在手机上本机跑 dsh | 🟡 PRoot + Alpine 路径已实证（dsh web 返回 200），尚未接进 App，见 docs/mobile-local-dsh.md |
+| 在手机上本机跑 dsh | ⏳ 未开启：PRoot + Alpine 已经实证能跑（`dsh web` 返回 200），但 1.6 GB rootfs 的下载与续传还没打磨，beta 默认不露出入口，见 docs/mobile-local-dsh.md |
 | 公网中继（自建） | ✅ 双方出站，中继只见密文；配 `relayUrl` + `relayToken` 即启用 |
 | 会话列表、历史、新建会话 | ✅ 新建时可挑智能体预设与工作目录；长按可改名 |
 | 链路保活（心跳） | ✅ 静默断线 10 秒内报错，不会一直转圈 |
@@ -84,7 +86,7 @@ flutter pub get
 flutter build apk --release --split-per-abi
 ```
 
-三份按 CPU 架构拆开的包：`app-arm64-v8a-release.apk`（约 24 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（约 20 MB，老设备）、`app-x86_64-release.apk`（约 26 MB，模拟器）。不拆包的单包约 35 MB。
+三份按 CPU 架构拆开的包（v0.1.0-beta 实测）：`app-arm64-v8a-release.apk`（12.3 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（11.5 MB，老设备）、`app-x86_64-release.apk`（12.9 MB，模拟器）。不拆包的单包约 17 MB。
 
 > 发布签名从 `app/android/key.properties` 读（模板见 `app/android/key.properties.example`）。
 > 这两个文件与 keystore 都在 `.gitignore` 里：开源仓库不该带能签出「官方包」的私钥。

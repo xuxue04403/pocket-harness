@@ -85,3 +85,13 @@ probe/proot/
 probe/_dshurl.txt
 probe/_parse51*.ps1
 tools/proot-dsh/cache/
+# proot 是 GPLv2 二进制，不入库：由 tools/proot-fetch.ps1 从 Alpine 现取
+app/android/app/src/main/jniLibs/
+probe/bin/
+probe/termux/
+probe/proot/apk/
+probe/_hashes.txt
+probe/_p5.sh
+probe/_proot*.sh
+probe/_tar_check.sh
+probe/_tp.sh

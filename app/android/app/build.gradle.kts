@@ -65,6 +65,16 @@ android {
             }
         }
     }
+
+    // proot 以 libproot.so 的身份放进 jniLibs，安装后落在 nativeLibraryDir 里 ——
+    // Android 10 起禁止从应用数据目录 exec，但 nativeLibraryDir 是允许的。
+    // 前提是这些库真的被解压出来：AGP 8 默认 `useLegacyPackaging = false`，
+    // 原生库直接从 APK 里映射，目录里一个文件都没有，exec 就无从谈起。
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 kotlin {

@@ -1,7 +1,10 @@
 import 'package:dsh_link/dsh_link.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../local/local_commands.dart';
+import '../local/local_host.dart';
 import '../storage/host_store.dart';
+import 'local_page.dart';
 import 'paste_page.dart';
 import 'sessions_page.dart';
 import 'scan_page.dart';
@@ -74,6 +77,13 @@ class _HostsPageState extends State<HostsPage> {
     );
   }
 
+  /// 「不连电脑、就在这台手机上跑」。第二条链路，和远程配对并列入口。
+  void _openLocal() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const LocalPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -90,6 +100,12 @@ class _HostsPageState extends State<HostsPage> {
             icon: const Icon(Icons.keyboard),
             tooltip: '手动输入配对码',
           ),
+          if (LocalHost.supported && kLocalDshEnabled)
+            IconButton(
+              onPressed: _openLocal,
+              icon: const Icon(Icons.phone_android),
+              tooltip: '在这台手机上跑 dsh',
+            ),
         ],
       ),
       floatingActionButton: _hosts.isEmpty
@@ -100,7 +116,11 @@ class _HostsPageState extends State<HostsPage> {
               label: const Text('配对'),
             ),
       body: _hosts.isEmpty
-          ? _EmptyState(onScan: _scan, onPaste: _paste)
+          ? _EmptyState(
+              onScan: _scan,
+              onPaste: _paste,
+              onLocal: LocalHost.supported && kLocalDshEnabled ? _openLocal : null,
+            )
           : _hostList(context),
     );
   }
@@ -142,10 +162,11 @@ class _HostsPageState extends State<HostsPage> {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.onScan, required this.onPaste});
+  const _EmptyState({required this.onScan, required this.onPaste, this.onLocal});
 
   final VoidCallback onScan;
   final VoidCallback onPaste;
+  final VoidCallback? onLocal;
 
   @override
   Widget build(BuildContext context) {
@@ -178,6 +199,22 @@ class _EmptyState extends StatelessWidget {
               icon: const Icon(Icons.keyboard),
               label: const Text('改为手动输入'),
             ),
+            if (onLocal != null) ...[
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 8),
+              Text(
+                '没有电脑？也可以让 dsh 直接跑在这台手机上。',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: onLocal,
+                icon: const Icon(Icons.phone_android),
+                label: const Text('在这台手机上跑 dsh'),
+              ),
+            ],
           ],
         ),
       ),
