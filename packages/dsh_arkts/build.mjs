@@ -9,5 +9,8 @@ await build({ ...shared, entryPoints: ['test/framing.ts'], outfile: 'build/frami
 await build({ ...shared, entryPoints: ['test/client.ts'], outfile: 'build/client.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/session_rows.ts'], outfile: 'build/session_rows.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/transcript.ts'], outfile: 'build/transcript.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/relay_protocol.ts'], outfile: 'build/relay_protocol.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/relay_contract.ts'], outfile: 'build/relay_contract.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live.ts'], outfile: 'build/live.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_transcript.ts'], outfile: 'build/live_transcript.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/live_relay.ts'], outfile: 'build/live_relay.mjs', platform: 'node', target: 'es2022' })

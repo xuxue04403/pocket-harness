@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（445 KB，内含 `ets/modules.abc` 235,348 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（452 KB，内含 `ets/modules.abc` 245,748 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -147,6 +147,23 @@ tar.exe -tf entry\build\default\outputs\default\entry-default-unsigned.hap
 ```
 
 `ets/modules.abc` 里能直接搜到 ArkUI 页面的字符串与 bundleName，说明 ArkTS 真的被编译进了字节码，不是空壳。签名后才能 `hdc install`，签名材料（AGC 证书 + profile）不入库。
+
+### 中继也在里面
+
+鸿蒙侧现在两条路都能走：局域网的 `openTcpTransport`（`@ohos.net.socket`）与公网的
+`openRelayTransport`（`@ohos.net.webSocket`），都在
+`tools/ohos-probe/entry/src/main/ets/platform.ohos.ts` 里，`LinkClient` 会自动先试
+局域网再退到中继。中继上踩到并修掉的三个坑：
+
+- **首帧必须是文本**：中继读它来分房间，二进制首帧会被 4400 关掉；
+- **二进制消息就是整帧**，没有 TCP 那种 4 字节长度前缀 —— 套用 `FrameSplitter` 会把
+  帧头当长度、算出天文数字后把连接关掉，表现是「中继连上了但立刻断开」；
+- **拒绝不在 JSON 上**：中继用关闭帧（`close(4403, 'bad token')`）拒绝，漏读 `on('close')`
+  的 `code` 就是「手机关了但界面一直转圈」。
+
+这三条都由 `packages/dsh_arkts/src/relay_protocol.ts` 表达、被 `test/relay_protocol.ts`
+与 `test/relay_contract.ts`（起真中继进程）钉住，`npm run test:live` 里还有一条
+`live_relay` 走完真实 Host 插件 + 真实中继的完整链路。
 
 ## 二期路线建议
 

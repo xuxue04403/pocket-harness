@@ -41,7 +41,7 @@
 | 待办面板 | ✅ 贴在对话上方，显示完成进度与当前项，可折叠 |
 | 会话分支 | ✅ 从当前会话分出一个副本，两边并行不互相影响 |
 | Android | ✅ 模拟器与构建均通过 |
-| HarmonyOS 7.0 | 🟡 配对 → 会话列表 → 对话页已在 ArkTS 里跑通并能编出 HAP；缺扫码、图片、设置等页面，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
+| HarmonyOS 7.0 | 🟡 配对 → 会话列表 → 对话页已在 ArkTS 里跑通（局域网与中继两条路都能连），能编出 HAP；缺扫码、图片、设置等页面，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
 | WebRTC P2P / TURN | ⏳ 二期（局域网直连 + 中继已覆盖当前场景） |
 
 ## 仓库结构
@@ -50,7 +50,7 @@
 |---|---|
 | [`app/`](app) | Flutter 客户端（Android 已通；鸿蒙共用同一套 Dart） |
 | [`packages/dsh_link/`](packages/dsh_link) | 纯 Dart 协议核心：Noise IK、分片、信封、RPC、双传输 |
-| [`packages/dsh_arkts/`](packages/dsh_arkts) | 同一套协议的 TypeScript 版，供鸿蒙 ArkTS 使用；金标向量与本机实测均通过 |
+| [`packages/dsh_arkts/`](packages/dsh_arkts) | 同一套协议的 TypeScript 版，供鸿蒙 ArkTS 使用；金标向量、真实 Host 与真实中继三条链路均实测通过 |
 | [`tools/ohos-probe/`](tools/ohos-probe) | 鸿蒙 ArkTS 宿主工程（配对码页、会话列表、对话页），Windows 上可产出未签名 HAP |
 | [`host/`](host) | DSH Host 插件，零运行时依赖的 ESM |
 | [`relay/`](relay) | 极简中继，只做房间配对与密文转发 |

@@ -55,10 +55,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # relay_contract 会起真的 relay/run.mjs，所以中继的 ws 依赖要先装。
+      - name: Install relay dependencies
+        working-directory: relay
+        run: npm install --no-audit --no-fund
       - name: Install build dependency
         working-directory: packages/dsh_arkts
         run: npm install --no-audit --no-fund
-      - name: Golden vectors and protocol checks
+      - name: Golden vectors, protocol, framing, client, relay checks
         working-directory: packages/dsh_arkts
         run: npm test
 

@@ -25,10 +25,11 @@
 | `src/client.ts` | 手机侧连接流程：hello → Noise → RPC，先试局域网再走中继 |
 | `src/session_rows.ts` | 会话列表的行：主键 `sessionId`、标题在 `projections` 里、运行中优先排序 |
 | `src/transcript.ts` | 会话正文的行：内容块拼接、工具调用、`turn/end` 的异常原因、流式增量 |
+| `src/relay_protocol.ts` | 中继控制消息：首帧 hello、进房回执、`ready`、关闭帧里的拒绝码 |
 
 ## 为什么能信
 
-`npm test` 跑六套断言：
+`npm test` 跑八套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -47,6 +48,12 @@
 6. **`test/transcript.ts`** —— 正文的真实形状：负载在 `event.data` 里、正文是内容块
    数组、工具参数是未解析的字符串、`turn/end` 只有 `completed`/`aborted` 安静、
    `tool-call-delta` 故意丢弃、snapshot 的 `records` 能被取出。
+7. **`test/relay_protocol.ts`** —— 中继控制消息的形状：hello 带版本/角色/房间/token、
+   空值与超长被提前拒绝、`ok:true` 是进房回执而 `ready` 才是对端到达、噪音被忽略、
+   **拒绝不在 JSON 上而是在关闭帧里**（4403/4409/4400 各有可行动的话）。
+8. **`test/relay_contract.ts`** —— 起一个**真的中继进程**（`relay/run.mjs`），证明上面
+   那些形状不是我自己想出来的：进房回执、双方 `ready`、字节原样穿过、手机离开时
+   Host 收到 `peer-gone`、错 token 关闭帧 4403、二进制首帧关闭帧 4400、第二部手机 4409。
 
 `npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做两件事：
 
@@ -55,6 +62,10 @@
 2. 用 `session/page` 把真实会话记录拉下来喂给 `readTranscript`，统计产出的行数
    （实测 24 个会话：用户 84 行、助手 48 行、工具 117 行）。单元测试证明解析器自洽，
    这一步证明「我以为的形状」和「Host 实际发的形状」是一回事。
+3. 起真实 Host 插件 + 真实中继，让 `LinkClient` **只带中继坐标**连过去，跑
+   `test/echo` 与 `test/count`（`ARKTS RELAY ROUTE TALKS TO THE REAL HOST`）。
+   这一步抓住过一个只有真链路能暴露的 bug：中继上的二进制消息**就是整帧**，
+   套用 TCP 的长度前缀切帧会把帧头当长度、算出天文数字后把连接关掉。
 
 ## 在鸿蒙工程里怎么用
 
@@ -74,10 +85,14 @@
   `@ohos.net.socket` 的 `constructTCPSocketInstance`，线上口径与 Dart 的
   `FramedSocket`、Node 的 `test/live.ts` 一致：`[uint32 大端长度][帧]`。
 
-切帧逻辑抽在 `src/framing.ts`（`FrameSplitter`/`frameWithLength`），因为它是两端共用
-且最容易在边界上出错的部分 —— Node 的 live 测试与鸿蒙的传输用的是**同一份**代码，
-所以「framing 自检通过」对两边同时成立。中继侧走 `@ohos.net.webSocket`，二进制
-消息即整帧、没有长度前缀。
+中继走 `@ohos.net.webSocket`，同一个文件里的 `openRelayTransport` 已经写好并编译过：
+**首帧发文本 hello**（中继靠它分房间，二进制会被 4400 关掉），之后一条二进制消息
+就是一整帧、没有长度前缀，拒绝则落在关闭帧的 `code` 上（4403 错 token、4409 房间已满）。
+这几条全部由 `src/relay_protocol.ts` 表达、被第 7、8 套断言钉住，平台桥接只是搬运。
+
+切帧逻辑抽在 `src/framing.ts`（`FrameSplitter`/`frameWithLength`），因为它是 TCP 那条路
+最容易在边界上出错的部分 —— Node 的 live 测试与鸿蒙的 TCP 传输用的是**同一份**代码，
+所以「framing 自检通过」对两边同时成立。
 
 ### ArkTS 的两个硬约束（写码时必须绕开）
 

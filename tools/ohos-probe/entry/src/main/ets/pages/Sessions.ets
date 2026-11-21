@@ -11,8 +11,7 @@ import type { Context } from '@kit.AbilityKit'
 import { x25519PublicKey } from '../core/curve25519'
 import { decodeTicket, type PairingTicket } from '../core/pairing'
 import { HostStore } from '../storage.ohos'
-import { openTcpTransport } from '../platform.ohos'
-import { systemRandom } from '../platform.ohos'
+import { openRelayTransport, openTcpTransport, systemRandom } from '../platform.ohos'
 import { LinkClient, LinkRefusedError } from '../core/client'
 import { readSessionRows, sortSessionRows, type SessionRow } from '../core/session_rows'
 
@@ -69,6 +68,7 @@ struct Sessions {
         identity: identity,
         random: systemRandom,
         openTransport: openTcpTransport,
+        openRelay: openRelayTransport,
         timeoutMs: 15000,
         heartbeat: true,
       })
