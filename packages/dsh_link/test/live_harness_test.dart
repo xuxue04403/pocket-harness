@@ -13,28 +13,45 @@ import 'package:test/test.dart';
 /// proves the plugin is installed, its identity is persisted, its Peer is
 /// accepted by the Typert gateway, and real DSH Remote endpoints answer.
 ///
-/// It is skipped unless `probe/_live-ticket.txt` exists, which
-/// `probe/live-ticket.mjs` writes from the plugin's stored identity.
+/// The pairing secret rotates every ten minutes, so the ticket is regenerated
+/// from the plugin's stored identity before connecting rather than being read
+/// from a file that may already be stale. When no Harness is running there is
+/// nothing to talk to and both tests skip themselves.
+const String _harnessExe = r'C:\Users\xuexu\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe';
+const String _ticketScript = r'D:\IDE\dsh-bot\probe\live-ticket.mjs';
 const String _ticketPath = r'D:\IDE\dsh-bot\probe\_live-ticket.txt';
 
-PairingTicket? _liveTicket() {
-  final file = File(_ticketPath);
-  if (!file.existsSync()) return null;
-  final text = file.readAsStringSync().trim();
+/// Regenerates the ticket, or returns null when no Harness identity is stored.
+Future<PairingTicket?> _freshTicket() async {
+  if (!File(_harnessExe).existsSync() || !File(_ticketScript).existsSync()) return null;
+  final result = await Process.run(
+    _harnessExe,
+    [_ticketScript, _ticketPath],
+    environment: const {'ELECTRON_RUN_AS_NODE': '1'},
+  );
+  // A non-zero exit means the plugin has never run (no stored identity) or the
+  // running Harness has not rotated its secret yet: both mean "skip", not "fail".
+  if (result.exitCode != 0) return null;
+  final text = File(_ticketPath).readAsStringSync().trim();
   if (text.isEmpty) return null;
   return PairingTicket.decode(text);
 }
 
 void main() {
-  final ticket = _liveTicket();
+  late PairingTicket? ticket;
+
+  setUpAll(() async {
+    ticket = await _freshTicket();
+  });
 
   group('the installed Host plugin in the running Harness', () {
     test('answers a real DSH Remote endpoint', () async {
-      if (ticket == null) {
-        markTestSkipped('no live ticket; run probe/live-ticket.mjs first');
+      final current = ticket;
+      if (current == null) {
+        markTestSkipped('no running Harness with a paired plugin; skipped');
         return;
       }
-      final link = await LinkClient.connect(ticket, DeviceIdentity.generate());
+      final link = await LinkClient.connect(current, DeviceIdentity.generate());
       try {
         // `session/list` is the API the phone's home screen opens with, so it is
         // the cheapest proof that a call reaches DSH and comes back shaped right.
@@ -49,11 +66,12 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 60)));
 
     test('streams a real DSH Remote stream', () async {
-      if (ticket == null) {
-        markTestSkipped('no live ticket; run probe/live-ticket.mjs first');
+      final current = ticket;
+      if (current == null) {
+        markTestSkipped('no running Harness with a paired plugin; skipped');
         return;
       }
-      final link = await LinkClient.connect(ticket, DeviceIdentity.generate());
+      final link = await LinkClient.connect(current, DeviceIdentity.generate());
       try {
         final list = await link.rpc.call('session/list', const {'_request': <String, Object?>{}});
         final items = (list['items'] as List<Object?>?) ?? const <Object?>[];
