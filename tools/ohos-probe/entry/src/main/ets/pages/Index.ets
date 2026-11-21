@@ -10,7 +10,7 @@ import { x25519PublicKey } from '../core/curve25519'
 import { NoiseIkSession, createNoisePrologue } from '../core/noise'
 import { decodeTicket, encodeTicket } from '../core/pairing'
 import { describeTicket, readTicketText, remainingLabel, ticketRemainingMs } from '../core/pairing_text'
-import { ClientCheckResult, runClientCheck, runPlatformCheck } from '../selfcheck'
+import { ClientCheckResult, runClientCheck, runPlatformCheck, runQrCheck } from '../selfcheck'
 import router from '@ohos.router'
 import type { Context } from '@kit.AbilityKit'
 import pasteboard from '@ohos.pasteboard'
@@ -58,6 +58,9 @@ struct Index {
       Button('跑一次完整客户端链路')
         .width('80%')
         .onClick(() => { this.runClient() })
+      Button('解三张二维码金标')
+        .width('80%')
+        .onClick(() => { this.runQr() })
       Divider().margin({ top: 8, bottom: 4 })
       Text('连一台真实的 Host').fontSize(13).fontColor('#666666').width('100%')
       TextInput({ text: this.ticketText, placeholder: '粘贴 pocketharness://pair?t=... 配对码' })
@@ -110,6 +113,14 @@ struct Index {
       this.summary = '客户端链路自检失败'
       this.detail = '' + error
     })
+  }
+
+  private runQr(): void {
+    this.summary = '正在解二维码金标…'
+    this.detail = ''
+    const result = runQrCheck()
+    this.summary = result.summary
+    this.detail = result.detail
   }
 
   private runPlatform(): void {

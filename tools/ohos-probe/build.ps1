@@ -22,13 +22,21 @@ try {
   # 协议核心只有一份：从 packages/dsh_arkts 拷进来，避免这里躺着一份会漂移的副本。
   # 两个坑：目标目录必须先建好（否则 Copy-Item 会把文件铺到当前工作目录），
   # 并且通配符要交给 Copy-Item 自己展开（用 -LiteralPath 过滤再管道时曾把目标写错）。
+  # 子目录（src/qr）要单独拷：`src/*.ts` 不会递归，漏了 qr 就会在 hvigor 里报找不到模块。
   $core = Join-Path $root 'entry\src\main\ets\core'
   $pattern = Join-Path $root '..\..\packages\dsh_arkts\src\*.ts'
   if (Test-Path $pattern) {
     New-Item -ItemType Directory -Force -Path $core | Out-Null
     Copy-Item -Path $pattern -Destination $core -Force
+    $qrSource = Join-Path $root '..\..\packages\dsh_arkts\src\qr'
+    if (Test-Path $qrSource) {
+      $qrTarget = Join-Path $core 'qr'
+      New-Item -ItemType Directory -Force -Path $qrTarget | Out-Null
+      Copy-Item -Path (Join-Path $qrSource '*.ts') -Destination $qrTarget -Force
+    }
     $copied = (Get-ChildItem -Path $core -Filter '*.ts' -File).Count
-    Write-Host "synced $copied protocol files into $core"
+    $copiedQr = (Get-ChildItem -Path $core\qr -Filter '*.ts' -File -ErrorAction SilentlyContinue).Count
+    Write-Host "synced $copied protocol files and $copiedQr qr files into $core"
   }
 
   node node_modules\@ohos\hvigor\bin\hvigor.js --mode module -p product=default assembleHap --no-daemon

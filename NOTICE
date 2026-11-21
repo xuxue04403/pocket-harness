@@ -32,6 +32,15 @@ shared_preferences  —  BSD 3-Clause   https://pub.dev/packages/shared_preferen
 crypto（Dart）       —  BSD 3-Clause   https://pub.dev/packages/crypto
 ws（Node）           —  MIT            https://github.com/websockets/ws
 
+关于二维码金标（仅开发期使用，不进任何发布产物）
+node-qrcode  —  MIT          https://github.com/soldair/node-qrcode
+jsQR         —  Apache-2.0   https://github.com/cozmo/jsQR
+
+使用方式：node-qrcode 只在 packages/dsh_arkts/tools/gen_qr_fixtures.mjs 里生成
+probe/qr_fixtures.json 的二维码矩阵与灰度像素；jsQR 只在开发时把同一份像素独立解一遍，
+用作交叉验证。手机上的解码器是 packages/dsh_arkts/src/qr/ 里自己写的实现，不依赖这两者，
+它们也都没有被打进 HAP 或 APK。
+
 ------------------------------------------------------------------
 关于 dsh-Go
 https://github.com/ccch1mneyyy/dsh-Go 采用 AGPL-3.0。本项目未使用其代码、名称或

@@ -38,10 +38,16 @@
 | `src/pairing_text.ts` | 从一整行日志里挑出配对码、判真伪、写成一句可核对的话 |
 | `src/jobs.ts` | 后台任务：`job/list` 是不结束的整集流、`follow` 三段式、`kill` 对已结束任务不报错 |
 | `src/todos.ts` | agent 的计划：`todos` 的 `null` 与空数组是两件事，`todo/write` 整表替换 |
+| `src/qr/gf256.ts` | GF(256) 的指数/对数表与多项式运算（本原多项式 `0x11d`） |
+| `src/qr/rs.ts` | Reed-Solomon：生成多项式、syndrome、Berlekamp-Massey + Chien + Forney 纠错 |
+| `src/qr/tables.ts` | 40 个版本 × 4 个纠错等级的分块参数（总码字数、块数、纠错码字数） |
+| `src/qr/format.ts` | 格式信息 BCH(15,5) 与版本信息 BCH(18,6)，两份副本容错读、八种掩码公式 |
+| `src/qr/decode.ts` | 矩阵 → 文本：定位图案遮罩、zig-zag 取码字、去交织、RS 纠错、按版本分档的载荷解析 |
+| `src/qr/sampler.ts` | 灰度图 → 矩阵：找暗像素包围盒、按版本推模块边长、逐模块多数表决 |
 
 ## 为什么能信
 
-`npm test` 跑十九套断言：
+`npm test` 跑二十一套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -106,6 +112,15 @@
     （前两者是「还没列计划」，整块隐藏；空数组是「计划被清空」，显示成空表）；
     `todo/write` 整表替换而不是合并；认不出的状态原样保留；进度的分母是全部条目；
     折叠摘要优先正在做的那条，全做完时说「全部完成」。
+20. **`test/qr_rs.ts`** —— Reed-Solomon 本身：GF(256) 的指数/对数表、生成多项式、
+    **QR 规范里那个经典例子**（v1-M 的数据码字必须纠出 `[165,36,212,193,237,54,199,135,44,85]`）、
+    损坏 1/3 字节可修、损坏 7 字节必须拒绝而不是硬凑、六种纠错码字数各在
+    `ecCount/2` 以内随机损坏后全部往返。
+21. **`test/qr_fixtures.ts`** —— 完整的二维码解码：金标来自 `probe/qr_fixtures.json`
+    （node-qrcode 生成、jsQR 独立验证过），四条样本覆盖 v1/v3/v5 与 L/M/H，
+    矩阵入口与**灰度图入口**都必须解回原文；格式信息的 32 种组合要能反解回自己的
+    level/mask；平方级别的损坏要能靠 ES 修回来并报出 `repairedBytes`；毁掉一整块
+    必须拒绝而不是给出乱码。
 
 `npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做十一件事：
 
@@ -155,6 +170,12 @@
 这是第一次接进去才发现 `hasRelay` 那个 bug 的原因）。产物 `.abc` 里能搜到
 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof` 等符号。
 
+二维码解码器同理：`selfcheck.ts` 的 `runQrCheck` 引用了 `qr/decode.ts` 与
+`qr/sampler.ts`，页面上有「解三张二维码金标」按钮，`.abc` 里能搜到 `decodeMatrix`、
+`matrixFromImage`、`readFormat`、`generatorPolynomial`、`deinterleave`、`countBits`。
+把它接进去还有一层原因：`src/qr/` 里的整数运算、位域解析与数组下标恰恰是换个
+JavaScript 引擎最容易偏的地方，而 Node 侧的绿只证明了 TypeScript 语义正确。
+
 需要替换的只有两处，探针工程里都已经写好并编译过：
 
 - **随机数**：`RandomSource` 由调用方注入。鸿蒙侧见
@@ -176,8 +197,31 @@
 ### ArkTS 的两个硬约束（写码时必须绕开）
 
 1. **没有 `TextEncoder`/`TextDecoder`** —— 用 `bytes.ts` 的 `utf8`/`fromUtf8`。
+   二维码载荷的解码也一样：`src/qr/decode.ts` 里是手写的严格 UTF-8 解码器
+   （会拒绝 overlong 与代理对形态），不是 `TextDecoder`。
 2. **禁 `unknown`/隐式 any**（`arkts-no-any-unknown`）—— 一律用 `json.ts` 的
    `JsonObject`，不要写 `Record<string, unknown>` 或 `let parsed: unknown`。
+
+`src/qr/format.ts` 还有一处为了跨运行时一致而做的妥协：32 组格式信息的查表不用
+`Map` 的解构迭代，而是两个平行数组（`FORMAT_CODES`/`FORMAT_INFOS`）。ArkTS 允许
+`Map`，但对它的 `for (const [k, v] of map)` 在两个引擎上不保证一致。
+
+### 扫码这条路为什么要自己写解码器
+
+鸿蒙 SDK **没有条码扫描接口**：`@ohos.scan.d.ets` 是打印扫描仪；约五十个 kit 里
+没有 ScanKit/VisionKit；`@ohos.multimedia.camera` 的
+`MetadataObjectType.BAR_CODE_DETECTION` 只给位置，`MetadataBarcodeObject` 是个空接口。
+所以配对码的获取只有两条路：粘贴（已经做了），或者自己从相机帧里解。
+
+`src/qr/` 就是这个「自己解」。范围划得很清楚：**只处理轴对齐、整像素模块的图**
+（配对码本身就是电脑屏幕上的渲染图，探针工程的 `runQrCheck` 用「每模块 4 像素 +
+4 模块静区」的灰度图验证过这条路径）。拍照的透视变换、倾斜、模糊不在范围内 ——
+本项目没有测试台，写一个测不了的几何校正只会把「有时候能扫」伪装成「支持扫码」。
+
+`tools/gen_qr_fixtures.mjs` 生成金标，`tools/gen_qr_samples.mjs` 把它抄成
+`qr_samples.ts` 供 ArkTS 运行时自检（`selfcheck.ts` 的 `runQrCheck`）。**两个生成器
+都必须在 `packages/dsh_arkts` 里跑**，因为 Node 只从这个包的 `node_modules` 解析
+`qrcode`。
 
 ### 平台代码为什么不在 `src/` 里
 

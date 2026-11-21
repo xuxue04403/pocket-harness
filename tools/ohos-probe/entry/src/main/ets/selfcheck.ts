@@ -18,6 +18,9 @@ import { SecureChannel, type FrameTransport } from './core/secure_channel'
 import { FRAME_KIND, decodeFrame, encodeEnvelope, encodeFrame, responseEnvelope } from './core/wire'
 import { LinkClient, LinkRefusedError } from './core/client'
 import type { JsonObject } from './core/json'
+import { decodeMatrix } from './core/qr/decode'
+import { matrixFromImage } from './core/qr/sampler'
+import { QR_SAMPLES } from './qr_samples'
 import { openTcpTransport, systemRandom } from './platform.ohos'
 
 /** 用固定字节填充的随机源：让结果可复现。 */
@@ -164,6 +167,85 @@ export interface ClientCheckResult {
   readonly ok: boolean
   readonly summary: string
   readonly detail: string
+}
+
+/**
+ * 在 ArkTS 运行时里把三张二维码金标真解一遍。
+ *
+ * 这是「扫码配对」这条路的地基检查：解码器是纯整数运算 + 位域解析，恰恰是
+ * 换一个 JavaScript 引擎最容易出偏差的地方。样本覆盖 v1（单块、H 级）、
+ * v3（单块、M 级）与 v5（两块交织、M 级），版本分支与块交织都会被走到。
+ */
+export function runQrCheck(): ClientCheckResult {
+  const started = Date.now()
+  const lines: string[] = []
+  let passed = 0
+  for (const sample of QR_SAMPLES) {
+    try {
+      const rows: boolean[][] = []
+      for (const line of sample.rows) {
+        const modules: boolean[] = []
+        for (let index = 0; index < line.length; index += 1) modules.push(line.charAt(index) === '1')
+        rows.push(modules)
+      }
+      const decoded = decodeMatrix(rows)
+      if (decoded.text !== sample.text) {
+        return { ok: false, summary: '二维码解出来不是原文', detail: sample.label + ' → ' + decoded.text }
+      }
+      if (decoded.version !== sample.version) {
+        return { ok: false, summary: '二维码版本认错', detail: sample.label + ' → v' + decoded.version }
+      }
+      if (decoded.level !== sample.level) {
+        return { ok: false, summary: '二维码纠错等级认错', detail: sample.label + ' → ' + decoded.level }
+      }
+      if (decoded.mask !== sample.mask) {
+        return { ok: false, summary: '二维码掩码认错', detail: sample.label + ' → ' + decoded.mask }
+      }
+      passed += 1
+      lines.push('ok ' + sample.label + ' v' + decoded.version + '/' + decoded.level + ' ' + decoded.text.length + ' 字符')
+    } catch (error) {
+      return { ok: false, summary: '二维码解码抛错', detail: sample.label + ' → ' + error }
+    }
+  }
+
+  // 采样器也要走一次：配对码最终是从相机帧里抠出来的矩阵，而不是现成的字符串数组。
+  // 这里把第一张样本放大成「每模块 4 像素、四周 4 模块静区」的灰度图，再原路解回。
+  try {
+    const sample = QR_SAMPLES[0]
+    const side = sample.rows.length
+    const modulePixels = 4
+    const quiet = 4
+    const pixels = new Uint8Array((side * modulePixels + quiet * 2) * (side * modulePixels + quiet * 2))
+    pixels.fill(255)
+    const imageSide = side * modulePixels + quiet * 2
+    for (let row = 0; row < side; row += 1) {
+      const line = sample.rows[row]
+      for (let col = 0; col < side; col += 1) {
+        if (line.charAt(col) !== '1') continue
+        for (let dy = 0; dy < modulePixels; dy += 1) {
+          for (let dx = 0; dx < modulePixels; dx += 1) {
+            const x = quiet + col * modulePixels + dx
+            const y = quiet + row * modulePixels + dy
+            pixels[y * imageSide + x] = 0
+          }
+        }
+      }
+    }
+    const fromPixels = decodeMatrix(matrixFromImage({ width: imageSide, height: imageSide, pixels: pixels }))
+    if (fromPixels.text !== sample.text) {
+      return { ok: false, summary: '从灰度图里认不出二维码', detail: sample.label + ' → ' + fromPixels.text }
+    }
+    lines.push('ok 灰度图 ' + imageSide + 'px 解回同一张码')
+  } catch (error) {
+    return { ok: false, summary: '灰度图定位抛错', detail: '' + error }
+  }
+
+  const elapsed = Date.now() - started
+  return {
+    ok: true,
+    summary: '二维码解码自检通过：' + passed + ' 张金标 + 灰度图定位（' + elapsed + ' ms）',
+    detail: lines.join('\n'),
+  }
 }
 
 /**

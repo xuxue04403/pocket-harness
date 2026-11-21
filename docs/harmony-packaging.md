@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（939 KB，内含 `ets/modules.abc` 595,728 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1048 KB，内含 `ets/modules.abc` 656,344 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -324,7 +324,8 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 鸿蒙 SDK **没有条码扫描接口**：`@ohos.scan` 是打印扫描仪（`SystemCapability.Print.PrintFramework`），
 相机里的 `MetadataObjectType.BAR_CODE_DETECTION` 只回调「这里有个条码」的位置与时间戳，
 `MetadataBarcodeObject` 是空接口 —— 拿不到内容。50 个 kit 里也没有 ScanKit / VisionKit。
-要做扫码只能接 HMS Scan Kit（需华为账号）或自己用 Camera + 纯 ArkTS 解码，都留到二期。
+要做扫码只能接 HMS Scan Kit（需华为账号）或自己用 Camera + 纯 ArkTS 解码。后者已经做完，
+见下面「二维码解码器」一节。
 
 于是粘贴成了唯一入口，而粘贴的输入比想象中脏：用户通常整行复制电脑日志
 
@@ -390,8 +391,39 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 早先的 `live_todos` 因此写成 `sawNull > 0 || sawList > 0`，在「一条都没找到」的情况下仍然
 通过。现在改成两条独立断言（两种形状都必须真的见到），并把扫描上限提到 200。
 
+### 二维码解码器：自己写一个，因为 SDK 里没有
+
+上面「配对码只能粘贴」那条的二期方案，就是自己从相机帧里解。`packages/dsh_arkts/src/qr/`
+把它做完了：GF(256) + Reed-Solomon、格式信息 BCH(15,5)、版本信息 BCH(18,6)、八种掩码、
+zig-zag 取码字、去交织、按版本分档的载荷解析（numeric/alnum/byte/kanji/ECI），再加上
+一个灰度图 → 矩阵的采样器。**不依赖任何第三方库**，因为鸿蒙工程里引一个 npm 包同样要过
+ArkTS 编译器，而纯整数运算恰恰是跨引擎最容易偏的地方 —— 自己写、自己钉金标，反而更稳。
+
+范围划得很清楚：**只处理轴对齐、整像素模块的图**。这正好覆盖真实场景 —— 配对码是电脑
+屏幕上渲染出来的二维码，相机对着屏幕时只要不歪就是轴对齐的。拍照的透视变换、倾斜、模糊
+不在范围内：本项目没有测试台，写一个测不了的几何校正只会把「有时候能扫」伪装成「支持扫码」。
+
+四条金标由 `packages/dsh_arkts/tools/gen_qr_fixtures.mjs` 用 node-qrcode 生成，落盘成
+`probe/qr_fixtures.json`（125,800 字节，含矩阵与灰度像素两组数据），再用 jsQR 独立解一遍
+做交叉验证。**生成器里的矩阵坐标是 `get(row, col)`**：第一版写成 `get(x, y)`，转置后的
+二维码依然看起来像二维码（两个定位图案对调后还是定位图案），只有解码出乱码才暴露 ——
+这个 bug 的修法是先让格式位逐位等于 `formatBits(level, mask)`，再让 jsQR 把像素解回原文。
+
+`selfcheck.ts` 的 `runQrCheck()` 在 ArkTS 运行时里把三张金标真解一遍（v1-H 单块、
+v3-M 单块、v5-M 两块交织，版本分支与块交织都会被走到），再把第一张放大成「每模块 4 像素 +
+四周 4 模块静区」的灰度图走一遍采样器。首页有「解三张二维码金标」按钮，点一下就能在设备上
+看到结果 —— 这是「扫码配对」这条路的地基检查，因为解码器一旦在设备上偏一位，界面只会说
+「找不到配对码」，没人能一眼看出是算术问题。
+
+**二维码解码器也在里面**：`src/qr/` 是纯 ArkTS 可编译的 TypeScript（没有 `TextDecoder`、
+没有 `Map` 解构迭代、没有 `new Array(n).fill()`），拷进 `core/qr/` 后 `.abc` 里能搜到
+`decodeMatrix`、`matrixFromImage`、`readFormat`、`generatorPolynomial`、`deinterleave`、
+`countBits`、`locateSymbol`、`sampleSymbol`。
+
 ## 二期路线建议
 
 1. 把这份 HAP 旁加载到真机，确认 `@ohos.net.socket` 与 `@ohos.net.webSocket` 在真机上能连（模拟器与真机的网络栈不同）。
-2. 相机扫码如受阻，先只保留"粘贴配对码"入口。
+2. 把 `runQrCheck` 从「三张硬编码金标」推进到真的相机取帧：`@ohos.multimedia.camera` 的
+   `imageReceiver` 回调里拿 YUV 帧、只取 Y 平面转灰度、喂 `matrixFromImage`。解码器本身已经
+   在设备运行时里验证过，剩下的是帧格式与采样节流（每帧都全图找定位图案太贵，先降采样）。
 3. 把设备私钥迁到 Asset Store Kit。
