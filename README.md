@@ -98,7 +98,7 @@ cd packages\dsh_link; dart analyze; dart test
 # Host 插件与中继：12 个测试
 node --test host
 
-# Flutter 客户端：32 个测试
+# Flutter 客户端：42 个测试
 cd app; flutter analyze; flutter test
 ```
 
