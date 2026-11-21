@@ -118,6 +118,8 @@ node probe/noise_vector.mjs     # 完整握手 + 传输密钥回放
 
 设计细节见 [docs/superpowers/specs/2026-11-20-pocket-harness-design.md](docs/superpowers/specs/2026-11-20-pocket-harness-design.md)。
 
+CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：三份独立作业分别跑协议层、Host 插件与中继、Flutter 客户端（含 `flutter build apk --debug`）。鸿蒙作业是手动触发，当前只说明缺失的工具链，详见打包文档。
+
 ## 安全
 
 - 所有业务数据走 Noise IK（`Noise_IK_25519_ChaChaPoly_SHA256`）端到端加密；中继与局域网中间设备只见密文。

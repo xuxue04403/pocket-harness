@@ -1,0 +1,87 @@
+name: ci
+
+# Everything here runs on a stock GitHub runner. The point is that a clone with
+# no local toolchain still proves the three layers: the Dart protocol core, the
+# Host plugin, and the Flutter client.
+#
+# The HarmonyOS job is intentionally separate and manual: `flutter build hap`
+# needs a macOS arm64 host plus Huawei-signed command line tools, neither of
+# which this repository can provision. See docs/harmony-packaging.md.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  protocol:
+    name: Dart protocol core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Analyze
+        working-directory: packages/dsh_link
+        run: dart analyze --fatal-infos
+      - name: Test
+        working-directory: packages/dsh_link
+        run: dart test
+
+  host:
+    name: Host plugin and relay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install relay dependencies
+        working-directory: relay
+        run: npm install --no-audit --no-fund
+      - name: Syntax check every plugin module
+        working-directory: host
+        run: for file in *.js; do node --check "$file"; done
+      - name: Test
+        run: node --test host
+
+  client:
+    name: Flutter client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.50.1'
+      - name: Dependencies
+        working-directory: app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze
+      - name: Test
+        working-directory: app
+        run: flutter test
+      - name: Build debug APK
+        working-directory: app
+        run: flutter build apk --debug
+
+  harmony:
+    name: HarmonyOS HAP (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Explain the missing toolchain
+        run: |
+          echo "HarmonyOS packaging needs the oh-flutter 3.47.9-ohos SDK and"
+          echo "Huawei-signed hvigor/ohpm, which cannot be downloaded without a"
+          echo "Huawei account. See docs/harmony-packaging.md for the exact steps."
+          exit 1
