@@ -26,12 +26,12 @@
 | 配对（扫码 / 粘贴配对码） | ✅ 一次性携带公钥与端点，天然 TOFU |
 | 局域网直连 | ✅ TCP + Noise IK |
 | 公网中继（自建） | ✅ 双方出站，中继只见密文 |
-| 会话列表、历史、新建会话 | ✅ |
+| 会话列表、历史、新建会话 | ✅ 新建时可挑智能体预设与工作目录 |
+| 按会话切换模型与思考强度（含网关模型） | ✅ 只影响当前会话，可回退默认 |
 | 发送提示词、抢断、停止 | ✅ |
 | 运行中逐字流式显示 | ✅ 思考与正文分栏 |
 | 工具调用与结果卡片 | ✅ |
 | 工具审批与提问（在手机上回答） | ✅ 拒答即 fail-closed，也可转回电脑 |
-| 按会话切换模型与思考强度（含网关模型） | ✅ 只影响当前会话，可回退默认 |
 | Android | ✅ 模拟器与构建均通过 |
 | HarmonyOS 7.0 | ⏳ 二期，见 [docs/harmony-packaging.md](docs/harmony-packaging.md) |
 | WebRTC P2P / TURN | ⏳ 二期（局域网直连 + 中继已覆盖当前场景） |
@@ -96,7 +96,7 @@ cd packages\dsh_link; dart analyze; dart test
 # Host 插件与中继：12 个测试
 node --test host
 
-# Flutter 客户端：22 个测试
+# Flutter 客户端：25 个测试
 cd app; flutter analyze; flutter test
 ```
 

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../dsh/host_link.dart';
 import '../storage/host_store.dart';
 import 'chat_page.dart';
+import 'new_session_sheet.dart';
 
 /// Connects to one Host and lists its sessions.
 ///
@@ -23,6 +24,11 @@ class _SessionsPageState extends State<SessionsPage> {
   Future<List<SessionSummary>>? _sessions;
   HostLink? _link;
   String? _error;
+
+  /// The directory the newest session lives in, offered as the default for the
+  /// next one. People work in the same project for a stretch, so retyping the
+  /// path each time is the common annoyance this removes.
+  String? _lastCwd;
 
   @override
   void initState() {
@@ -47,7 +53,14 @@ class _SessionsPageState extends State<SessionsPage> {
       setState(() {
         _link = link;
       });
-      return await link.sessions();
+      final sessions = await link.sessions();
+      for (final session in sessions) {
+        if (session.cwd != null && session.cwd!.isNotEmpty) {
+          _lastCwd = session.cwd;
+          break;
+        }
+      }
+      return sessions;
     } on Object catch (error) {
       if (mounted) setState(() => _error = _describe(error));
       rethrow;
@@ -76,10 +89,18 @@ class _SessionsPageState extends State<SessionsPage> {
     final link = _link;
     if (link == null) return;
     final messenger = ScaffoldMessenger.of(context);
+    // The roster is fetched once per sheet; a Host that cannot answer falls back
+    // to "use the computer's default" rather than blocking session creation.
+    final choice = await showNewSessionSheet(
+      context,
+      presets: link.presets(),
+      initialCwd: _lastCwd,
+    );
+    if (choice == null || !mounted) return;
     try {
-      final id = await link.createSession();
+      final id = await link.createSession(cwd: choice.cwd, agentPreset: choice.agentPreset);
       if (!mounted) return;
-      await _open(id, '新建会话');
+      await _open(id, choice.cwd == null ? '新建会话' : _basename(choice.cwd!));
       _refresh();
     } on Object catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(_describe(error))));
@@ -203,6 +224,14 @@ String _relative(DateTime time) {
 }
 
 String _two(int value) => value.toString().padLeft(2, '0');
+
+/// The last path segment, for a chat title that fits on one line.
+String _basename(String path) {
+  final trimmed = path.endsWith(r'\') || path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+  final cut = trimmed.lastIndexOf(RegExp(r'[\\/]'));
+  final name = cut == -1 ? trimmed : trimmed.substring(cut + 1);
+  return name.isEmpty ? trimmed : name;
+}
 
 class _ConnectionProblem extends StatelessWidget {
   const _ConnectionProblem({required this.message, required this.onRetry});

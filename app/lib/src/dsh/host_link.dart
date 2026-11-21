@@ -47,6 +47,40 @@ class SessionSummary {
   }
 }
 
+/// One agent preset the Host offers for new sessions.
+class AgentPreset {
+  const AgentPreset({
+    required this.id,
+    this.name,
+    this.description,
+    this.isDefault = false,
+  });
+
+  final String id;
+  final String? name;
+  final String? description;
+  final bool isDefault;
+
+  /// What to show in a picker: the display name when the Host has one, because
+  /// several built-in presets ship with an id and nothing else.
+  String get label => name ?? id;
+
+  /// Reads one entry of `agentPresets/list`.
+  static AgentPreset? fromJson(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    final id = value['id'];
+    if (id is! String || id.isEmpty) return null;
+    final name = value['name'];
+    final description = value['description'];
+    return AgentPreset(
+      id: id,
+      name: name is String && name.isNotEmpty ? name : null,
+      description: description is String && description.isNotEmpty ? description : null,
+      isDefault: value['isDefault'] == true,
+    );
+  }
+}
+
 /// One model the Host can route to.
 class ModelChoice {
   const ModelChoice({
@@ -425,14 +459,30 @@ class HostLink {
     return summaries;
   }
 
-  /// Creates a fresh session, optionally in [cwd].
-  Future<String> createSession({String? cwd}) async {
+  /// Creates a fresh session, optionally in [cwd] and with an agent preset.
+  Future<String> createSession({String? cwd, String? agentPreset}) async {
     final value = await _client.rpc.call('session/create', {
-      'request': {'cwd': ?cwd},
+      'request': {'cwd': ?cwd, 'agentPreset': ?agentPreset},
     });
     final id = value['sessionId'];
     if (id is! String || id.isEmpty) throw StateError('the Host did not return a session id');
     return id;
+  }
+
+  /// Every agent preset this Host offers for new sessions.
+  ///
+  /// The namespace is `agentPresets`, not `agentPreset`; the gateway rejects the
+  /// kebab-case spelling with `no active Remote method exports this endpoint`.
+  Future<List<AgentPreset>> presets() async {
+    final value = await _client.rpc.call('agentPresets/list', const {});
+    final entries = value['presets'];
+    if (entries is! List) return const [];
+    final presets = <AgentPreset>[];
+    for (final entry in entries) {
+      final preset = AgentPreset.fromJson(entry);
+      if (preset != null) presets.add(preset);
+    }
+    return presets;
   }
 
   /// Follows one session, yielding the opening snapshot and then live frames.

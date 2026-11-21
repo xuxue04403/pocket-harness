@@ -360,4 +360,33 @@ void _questionTests() {
       expect(selection?.provider, 'gateway');
       expect(selection?.reasoningEffort, 'low');
     });
-  });}
+  });
+
+  group('agent presets', () {
+    test('keeps the display name and the id apart', () {
+      final preset = AgentPreset.fromJson({
+        'id': 'lean',
+        'name': '精工模式',
+        'description': '面向编码与量化策略的精简工具集',
+        'order': 5,
+        'isDefault': false,
+      });
+      expect(preset?.id, 'lean');
+      expect(preset?.label, '精工模式');
+      expect(preset?.description, '面向编码与量化策略的精简工具集');
+      expect(preset?.isDefault, isFalse);
+    });
+
+    test('falls back to the id when the roster carries no name', () {
+      final preset = AgentPreset.fromJson({'id': 'standard', 'order': 1, 'isDefault': true});
+      expect(preset?.label, 'standard');
+      expect(preset?.description, isNull);
+      expect(preset?.isDefault, isTrue);
+    });
+
+    test('skips entries without an id', () {
+      expect(AgentPreset.fromJson({'name': 'nameless'}), isNull);
+      expect(AgentPreset.fromJson('lean'), isNull);
+    });
+  });
+}
