@@ -184,6 +184,88 @@ void main() {
 
   _questionTests();
   _settingsTests();
+  _workspaceTests();
+}
+
+/// The workspace file payloads, as `workspaceFiles/*` returns them.
+void _workspaceTests() {
+  group('workspace listing', () {
+    test('reads entries, the path and the truncation flag', () {
+      final listing = WorkspaceListing.fromJson({
+        'path': 'lib',
+        'truncated': true,
+        'entries': [
+          {'name': 'main.dart', 'type': 'file', 'size': 1200},
+          {'name': 'src', 'type': 'directory'},
+        ],
+      });
+      expect(listing.path, 'lib');
+      expect(listing.truncated, isTrue);
+      expect(listing.entries.first.name, 'main.dart');
+      expect(listing.entries.first.size, 1200);
+      expect(listing.entries.first.isDirectory, isFalse);
+      expect(listing.entries.last.isDirectory, isTrue);
+    });
+
+    test('drops entries without a name', () {
+      final listing = WorkspaceListing.fromJson({
+        'entries': [
+          {'type': 'file'},
+          {'name': 'kept', 'type': 'file'},
+        ],
+      });
+      expect(listing.entries.single.name, 'kept');
+    });
+
+    test('treats a missing entry list as empty', () {
+      final listing = WorkspaceListing.fromJson(const {});
+      expect(listing.entries, isEmpty);
+      expect(listing.path, '');
+    });
+  });
+
+  group('workspace file text', () {
+    test('reads the page and whether it reaches the end', () {
+      final page = WorkspaceFileText.fromJson({
+        'absolutePath': r'D:\IDE\dsh-bot\README.md',
+        'text': '# Pocket Harness',
+        'offset': 1,
+        'lines': 1,
+        'bytes': 6809,
+        'eof': false,
+      });
+      expect(page.absolutePath, r'D:\IDE\dsh-bot\README.md');
+      expect(page.text, '# Pocket Harness');
+      expect(page.offset, 1);
+      expect(page.lines, 1);
+      expect(page.bytes, 6809);
+      expect(page.eof, isFalse);
+    });
+
+    test('falls back to empty values for a malformed page', () {
+      final page = WorkspaceFileText.fromJson(const {});
+      expect(page.text, '');
+      expect(page.lines, 0);
+      expect(page.eof, isFalse);
+    });
+  });
+
+  group('workspace search', () {
+    test('keeps matches and marks directories', () {
+      final matches = [
+        for (final raw in [
+          {'path': 'app/lib/main.dart', 'type': 'file'},
+          {'path': 'app/lib', 'type': 'directory'},
+          {'type': 'file'},
+        ])
+          ?WorkspaceMatch.fromJson(raw),
+      ];
+      expect(matches.length, 2);
+      expect(matches.first.path, 'app/lib/main.dart');
+      expect(matches.first.isDirectory, isFalse);
+      expect(matches.last.isDirectory, isTrue);
+    });
+  });
 }
 
 /// The settings payloads, as `settings/describe` returns them.

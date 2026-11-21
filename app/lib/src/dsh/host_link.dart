@@ -702,6 +702,116 @@ class SettingsSnapshot {
   }
 }
 
+/// One direct child of a workspace directory.
+class WorkspaceEntry {
+  const WorkspaceEntry({required this.name, required this.type, this.size});
+
+  final String name;
+
+  /// `directory` or `file`, as the Host reports it.
+  final String type;
+  final int? size;
+
+  bool get isDirectory => type == 'directory';
+
+  static WorkspaceEntry? fromJson(Object? input) {
+    if (input is! Map<String, Object?>) return null;
+    final name = input['name'];
+    if (name is! String || name.isEmpty) return null;
+    final type = input['type'];
+    final size = input['size'];
+    return WorkspaceEntry(
+      name: name,
+      type: type is String ? type : 'file',
+      size: size is num ? size.toInt() : null,
+    );
+  }
+}
+
+/// One directory listing, keyed by the workspace-relative path it describes.
+class WorkspaceListing {
+  const WorkspaceListing({
+    required this.path,
+    required this.entries,
+    required this.truncated,
+  });
+
+  /// Empty for the workspace root, `/`-joined below it.
+  final String path;
+  final List<WorkspaceEntry> entries;
+
+  /// True when the Host's entry cap dropped children from [entries].
+  final bool truncated;
+
+  static WorkspaceListing fromJson(Map<String, Object?> value) {
+    final entries = value['entries'];
+    final path = value['path'];
+    return WorkspaceListing(
+      path: path is String ? path : '',
+      entries: [
+        if (entries is List)
+          for (final entry in entries) ?WorkspaceEntry.fromJson(entry),
+      ],
+      truncated: value['truncated'] == true,
+    );
+  }
+}
+
+/// One page of a text file.
+///
+/// [eof] reports whether the page reaches the last line, so the reader knows a
+/// short page means "done" rather than "the Host is still working".
+class WorkspaceFileText {
+  const WorkspaceFileText({
+    required this.absolutePath,
+    required this.text,
+    required this.offset,
+    required this.lines,
+    required this.bytes,
+    required this.eof,
+  });
+
+  final String absolutePath;
+  final String text;
+  final int offset;
+  final int lines;
+  final int bytes;
+  final bool eof;
+
+  static WorkspaceFileText fromJson(Map<String, Object?> value) {
+    int number(Object? input) => input is num ? input.toInt() : 0;
+    final path = value['absolutePath'];
+    final text = value['text'];
+    return WorkspaceFileText(
+      absolutePath: path is String ? path : '',
+      text: text is String ? text : '',
+      offset: number(value['offset']),
+      lines: number(value['lines']),
+      bytes: number(value['bytes']),
+      eof: value['eof'] == true,
+    );
+  }
+}
+
+/// One hit from a workspace-wide name search.
+class WorkspaceMatch {
+  const WorkspaceMatch({required this.path, required this.type});
+
+  /// `/`-joined path relative to the workspace root, never empty.
+  final String path;
+  final String type;
+
+  bool get isDirectory => type == 'directory';
+
+  static WorkspaceMatch? fromJson(Object? input) {
+    if (input is! Map<String, Object?>) return null;
+    final path = input['path'];
+    if (path is! String || path.isEmpty) return null;
+    final type = input['type'];
+    return WorkspaceMatch(path: path, type: type is String ? type : 'file');
+  }
+}
+
 /// A live, encrypted link to one Host, with the DSH calls the phone makes.
 /// Every method here is a thin wrapper over one Typert endpoint; the arguments
 /// are spelled exactly as the Host's descriptors require, because the gateway
@@ -1039,6 +1149,55 @@ class HostLink {
     final updated = SettingsNamespace.fromJson(answer);
     if (updated == null) throw StateError('电脑没有返回更新后的设置');
     return updated;
+  }
+
+  /// Lists one directory of a session's workspace.
+  ///
+  /// `workspaceFiles/list` takes the Session id on the wire rather than a path,
+  /// because the Host derives the workspace root from the Session itself: a
+  /// phone can browse a workspace only through a session that owns it. An empty
+  /// path is refused by the Host, so the root is asked for as `.`.
+  Future<WorkspaceListing> listDirectory(String sessionId, String path) async {
+    final value = await _client.rpc.call('workspaceFiles/list', {
+      'workspaceFileScopeId': sessionId,
+      'path': path.trim().isEmpty ? '.' : path,
+    });
+    return WorkspaceListing.fromJson(value);
+  }
+
+  /// Reads one page of a UTF-8 text file.
+  Future<WorkspaceFileText> readFile(
+    String sessionId,
+    String path, {
+    int offset = 1,
+    int limit = 400,
+  }) async {
+    final value = await _client.rpc.call('workspaceFiles/read', {
+      'workspaceFileScopeId': sessionId,
+      'path': path,
+      'range': {'offset': offset, 'limit': limit},
+    });
+    return WorkspaceFileText.fromJson(value);
+  }
+
+  /// Searches entry names and workspace-relative paths.
+  ///
+  /// A query without `/` matches names; with `/` it matches paths. The Host
+  /// refuses a blank query, so an empty phone query must never be sent.
+  Future<List<WorkspaceMatch>> findFiles(String sessionId, String query) async {
+    final value = await _client.rpc.call('workspaceFiles/search', {
+      'workspaceFileScopeId': sessionId,
+      'request': {
+        'query': query,
+        'excludedPaths': const <String>[],
+        'includeHidden': false,
+        'respectGitignore': true,
+      },
+    });
+    final matches = value['matches'];
+    return [
+      if (matches is List) for (final match in matches) ?WorkspaceMatch.fromJson(match),
+    ];
   }
 
   Future<void> close() async {

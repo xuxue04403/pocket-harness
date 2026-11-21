@@ -8,6 +8,7 @@ import '../dsh/host_link.dart';
 import '../dsh/outgoing_image.dart';
 import '../dsh/questions.dart';
 import '../dsh/tool_labels.dart';
+import 'files_page.dart';
 import 'model_sheet.dart';
 import 'skill_sheet.dart';
 
@@ -111,6 +112,14 @@ class _ChatPageState extends State<ChatPage> {
       if (!mounted) return;
       setState(() => _loadingSelection = false);
     }
+  }
+
+  Future<void> _openFiles() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FilesPage(link: widget.link, sessionId: widget.sessionId),
+      ),
+    );
   }
 
   Future<void> _pickModel() async {
@@ -396,6 +405,11 @@ class _ChatPageState extends State<ChatPage> {
           ],
         ),
         actions: [
+          IconButton(
+            onPressed: _openFiles,
+            icon: const Icon(Icons.folder_open_outlined),
+            tooltip: '工作区文件',
+          ),
           IconButton(
             onPressed: _pickModel,
             icon: const Icon(Icons.tune),
