@@ -816,6 +816,120 @@ class WorkspaceMatch {
 /// Every method here is a thin wrapper over one Typert endpoint; the arguments
 /// are spelled exactly as the Host's descriptors require, because the gateway
 /// validates parameter names.
+/// One background job the Host is running for this session.
+class JobSummary {
+  const JobSummary({
+    required this.id,
+    required this.kind,
+    required this.label,
+    required this.status,
+    required this.startedAt,
+    this.progress,
+    this.detail,
+    this.finishedAt,
+  });
+
+  final String id;
+  final String kind;
+  final String label;
+  final String status;
+  final String? progress;
+  final String? detail;
+  final DateTime? startedAt;
+  final DateTime? finishedAt;
+
+  /// A job is still occupying the Host while it runs or drains a stop request.
+  bool get isLive => status == 'running' || status == 'stopping';
+
+  /// Chinese label for the lifecycle, because the wire statuses are English.
+  String get statusLabel => switch (status) {
+    'running' => '运行中',
+    'stopping' => '停止中',
+    'completed' => '已完成',
+    'killed' => '已终止',
+    'failed' => '失败',
+    _ => status,
+  };
+
+  static JobSummary? fromJson(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    final id = value['id'];
+    if (id is! String || id.isEmpty) return null;
+    final label = value['label'];
+    final started = value['startedAt'];
+    final finished = value['finishedAt'];
+    final progress = value['progress'];
+    final detail = value['detail'];
+    final kind = value['kind'];
+    return JobSummary(
+      id: id,
+      kind: kind is String ? kind : 'job',
+      label: label is String && label.isNotEmpty ? label : id,
+      status: value['status'] is String ? value['status']! as String : 'unknown',
+      progress: progress is String && progress.isNotEmpty ? progress : null,
+      detail: detail is String && detail.isNotEmpty ? detail : null,
+      startedAt: started is num
+          ? DateTime.fromMillisecondsSinceEpoch(started.toInt())
+          : null,
+      finishedAt: finished is num
+          ? DateTime.fromMillisecondsSinceEpoch(finished.toInt())
+          : null,
+    );
+  }
+}
+
+/// One frame of a job's output stream, flattened for the UI.
+class JobOutputFrame {
+  const JobOutputFrame({
+    required this.kind,
+    this.text = '',
+    this.job,
+    this.lossy = false,
+  });
+
+  /// `opened`, `output`, or `status`.
+  final String kind;
+
+  /// Text appended by this frame; empty for the opening and closing anchors.
+  final String text;
+
+  /// The job projection carried by `opened` and `status`.
+  final JobSummary? job;
+
+  /// Earlier bytes were already evicted when this frame was read.
+  final bool lossy;
+
+  static JobOutputFrame? fromJson(Map<String, Object?> frame) {
+    final type = frame['type'];
+    if (type is! String) return null;
+    switch (type) {
+      case 'opened':
+      case 'status':
+        return JobOutputFrame(
+          kind: type,
+          job: JobSummary.fromJson(frame['job']),
+        );
+      case 'output':
+        final chunks = frame['chunks'];
+        final buffer = StringBuffer();
+        if (chunks is List) {
+          for (final chunk in chunks) {
+            if (chunk is Map && chunk['text'] is String) {
+              buffer.write(chunk['text'] as String);
+            }
+          }
+        }
+        return JobOutputFrame(
+          kind: type,
+          text: buffer.toString(),
+          lossy: frame['lossy'] == true,
+        );
+      default:
+        return null;
+    }
+  }
+}
+
 class HostLink {
   HostLink._(this._client, this.ticket);
 
@@ -1198,6 +1312,62 @@ class HostLink {
     return [
       if (matches is List) for (final match in matches) ?WorkspaceMatch.fromJson(match),
     ];
+  }
+
+  /// The jobs this session can see, as the Host currently reports them.
+  ///
+  /// `job/list` is a whole-set stream, so the first frame is already the truth.
+  /// It never completes, so this reads one frame and unsubscribes instead of
+  /// waiting for an end that does not come.
+  Future<List<JobSummary>> jobs(String sessionId) async {
+    final frames = _client.rpc.openStream('job/list', {
+      'request': {'sessionId': sessionId},
+    });
+    final frame = await frames.first;
+    final rows = frame['jobs'];
+    return [
+      if (rows is List) for (final row in rows) ?JobSummary.fromJson(row),
+    ];
+  }
+
+  /// Watches the session's job roster until the stream closes.
+  Stream<List<JobSummary>> watchJobs(String sessionId) {
+    return _client.rpc
+        .openStream('job/list', {
+          'request': {'sessionId': sessionId},
+        })
+        .map((frame) {
+          final rows = frame['jobs'];
+          return [
+            if (rows is List) for (final row in rows) ?JobSummary.fromJson(row),
+          ];
+        });
+  }
+
+  /// Asks the Host to cancel one background job.
+  ///
+  /// The Host answers `requested` or `already-finished`. A job the roster no
+  /// longer carries is an error, so the caller refreshes the roster afterwards.
+  Future<String> killJob(String sessionId, String jobId) async {
+    final value = await _client.rpc.call('job/kill', {
+      'request': {'sessionId': sessionId, 'jobId': jobId},
+    });
+    final outcome = value['outcome'];
+    return outcome is String ? outcome : 'requested';
+  }
+
+  /// Streams one job's output until it settles.
+  ///
+  /// The stream opens with an `opened` anchor, then batches of output, then a
+  /// terminal `status` frame after which it closes by itself.
+  Stream<JobOutputFrame> followJob(String jobId, {String? sessionId}) {
+    return _client.rpc
+        .openStream('job/follow', {
+          'request': {'jobId': jobId, 'sessionId': ?sessionId},
+        })
+        .map(JobOutputFrame.fromJson)
+        .where((frame) => frame != null)
+        .cast<JobOutputFrame>();
   }
 
   Future<void> close() async {

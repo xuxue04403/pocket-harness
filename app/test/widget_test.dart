@@ -185,6 +185,7 @@ void main() {
   _questionTests();
   _settingsTests();
   _workspaceTests();
+  _jobTests();
 }
 
 /// The workspace file payloads, as `workspaceFiles/*` returns them.
@@ -783,3 +784,99 @@ SessionSummary _summary(String id, String title, String? cwd) => SessionSummary(
       running: false,
       cwd: cwd,
     );
+
+/// The `job/list` and `job/follow` payloads, as the Host sends them.
+void _jobTests() {
+  group('job summary', () {
+    test('reads a settled row and labels its status in Chinese', () {
+      final job = JobSummary.fromJson({
+        'id': 'pwsh-abc123',
+        'kind': 'pwsh',
+        'label': 'gradlew assembleDebug',
+        'status': 'completed',
+        'detail': 'exit code: 0',
+        'startedAt': 1795254970727,
+        'finishedAt': 1795254997361,
+      });
+
+      expect(job, isNotNull);
+      expect(job!.id, 'pwsh-abc123');
+      expect(job.kind, 'pwsh');
+      expect(job.statusLabel, '已完成');
+      expect(job.detail, 'exit code: 0');
+      expect(job.isLive, isFalse);
+      expect(job.finishedAt, isNotNull);
+    });
+
+    test('treats running and stopping as live', () {
+      for (final status in ['running', 'stopping']) {
+        final job = JobSummary.fromJson({
+          'id': 'bash-1',
+          'label': 'npm test',
+          'status': status,
+          'startedAt': 1,
+        });
+        expect(job!.isLive, isTrue, reason: status);
+      }
+    });
+
+    test('falls back to the id when the label is missing', () {
+      final job = JobSummary.fromJson({
+        'id': 'bash-2',
+        'status': 'failed',
+        'startedAt': 0,
+      });
+      expect(job!.label, 'bash-2');
+      expect(job.kind, 'job');
+      expect(job.statusLabel, '失败');
+    });
+
+    test('drops a row without an id', () {
+      expect(JobSummary.fromJson({'label': 'orphan'}), isNull);
+      expect(JobSummary.fromJson(null), isNull);
+    });
+  });
+
+  group('job output frame', () {
+    test('joins the chunks of an output frame and keeps the lossy marker', () {
+      final frame = JobOutputFrame.fromJson({
+        'type': 'output',
+        'next': 42,
+        'lossy': true,
+        'chunks': [
+          {'at': 0, 'text': 'first line\n'},
+          {'at': 11, 'text': 'second line\n'},
+        ],
+      });
+
+      expect(frame, isNotNull);
+      expect(frame!.kind, 'output');
+      expect(frame.text, 'first line\nsecond line\n');
+      expect(frame.lossy, isTrue);
+    });
+
+    test('reads the job carried by an opened anchor', () {
+      final frame = JobOutputFrame.fromJson({
+        'type': 'opened',
+        'from': 0,
+        'job': {
+          'id': 'bash-3',
+          'label': 'sleep 5',
+          'status': 'running',
+          'startedAt': 5,
+        },
+      });
+
+      expect(frame!.kind, 'opened');
+      expect(frame.text, isEmpty);
+      expect(frame.job!.id, 'bash-3');
+      expect(frame.job!.isLive, isTrue);
+    });
+
+    test('ignores a frame it has no meaning for', () {
+      expect(JobOutputFrame.fromJson({'type': 'mystery'}), isNull);
+      expect(JobOutputFrame.fromJson(const {}), isNull);
+    });
+  });
+}
+

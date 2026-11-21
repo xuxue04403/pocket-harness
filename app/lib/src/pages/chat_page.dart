@@ -9,6 +9,7 @@ import '../dsh/outgoing_image.dart';
 import '../dsh/questions.dart';
 import '../dsh/tool_labels.dart';
 import 'files_page.dart';
+import 'jobs_page.dart';
 import 'model_sheet.dart';
 import 'skill_sheet.dart';
 
@@ -118,6 +119,14 @@ class _ChatPageState extends State<ChatPage> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => FilesPage(link: widget.link, sessionId: widget.sessionId),
+      ),
+    );
+  }
+
+  Future<void> _openJobs() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => JobsPage(link: widget.link, sessionId: widget.sessionId),
       ),
     );
   }
@@ -409,6 +418,11 @@ class _ChatPageState extends State<ChatPage> {
             onPressed: _openFiles,
             icon: const Icon(Icons.folder_open_outlined),
             tooltip: '工作区文件',
+          ),
+          IconButton(
+            onPressed: _openJobs,
+            icon: const Icon(Icons.task_alt_outlined),
+            tooltip: '后台任务',
           ),
           IconButton(
             onPressed: _pickModel,
