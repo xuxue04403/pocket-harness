@@ -79,3 +79,9 @@ app/android/key.properties
 app/android/build/
 app/android/app/*.jks
 app/android/*.jks
+
+# 本机跑 dsh 的探针产物：rootfs 与 proot 二进制都是几 MB 的下载物，不入库
+probe/proot/
+probe/_dshurl.txt
+probe/_parse51*.ps1
+tools/proot-dsh/cache/

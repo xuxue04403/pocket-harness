@@ -25,6 +25,7 @@
 |---|---|
 | 配对（扫码 / 粘贴配对码） | ✅ 一次性携带公钥与端点，天然 TOFU |
 | 局域网直连 | ✅ TCP + Noise IK |
+| 在手机上本机跑 dsh | 🟡 PRoot + Alpine 路径已实证（dsh web 返回 200），尚未接进 App，见 docs/mobile-local-dsh.md |
 | 公网中继（自建） | ✅ 双方出站，中继只见密文；配 `relayUrl` + `relayToken` 即启用 |
 | 会话列表、历史、新建会话 | ✅ 新建时可挑智能体预设与工作目录；长按可改名 |
 | 链路保活（心跳） | ✅ 静默断线 10 秒内报错，不会一直转圈 |
@@ -54,6 +55,7 @@
 | [`tools/ohos-probe/`](tools/ohos-probe) | 鸿蒙 ArkTS 宿主工程（配对码页、会话列表与新建面板、对话页、审批条、模型面板、技能面板、电脑设置页、工作区文件页、图片选择与历史缩略图、后台任务页、agent 计划面板、从剪贴板粘贴配对码），Windows 上可产出未签名 HAP |
 | [`host/`](host) | DSH Host 插件，零运行时依赖的 ESM |
 | [`relay/`](relay) | 极简中继，只做房间配对与密文转发 |
+| [`tools/proot-dsh/`](tools/proot-dsh) | 在手机上本机跑 dsh 的安装与自检脚本（PRoot + Alpine + Node 24） |
 | [`docs/`](docs) | 设计文档与打包说明 |
 | [`probe/`](probe) | 诊断脚本（金标向量回放、真实 Harness 探测） |
 
