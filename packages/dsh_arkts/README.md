@@ -9,12 +9,13 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `src/bytes.ts` | 字节拼接、base64url、Noise 的 12 字节计数器 |
+| `src/bytes.ts` | 字节拼接、base64url、Noise 的 12 字节计数器、手写 UTF-8 |
 | `src/sha256.ts` | SHA-256 与 HMAC-SHA-256 |
 | `src/curve25519.ts` | RFC 7748 X25519（BigInt 实现） |
 | `src/chacha20_poly1305.ts` | RFC 8439 AEAD |
 | `src/noise.ts` | Noise IK 双角色握手与传输密钥 |
 | `src/wire.ts` | 帧、DSHF 分片、JSON 信封 |
+| `src/json.ts` | `JsonObject` 与收口用的取值函数（ArkTS 禁 `unknown`） |
 | `src/rpc.ts` | 请求/响应关联与流式端点 |
 | `src/pairing.ts` | 配对票据、端点解析 |
 | `src/identity.ts` | 设备身份与 UUIDv7 形状的 id |
@@ -37,12 +38,22 @@ Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
 
 ## 在鸿蒙工程里怎么用
 
-`src/` 是平台无关的（除了 `test/`），hvigor 直接编译即可。需要替换的只有两处：
+`src/` 是平台无关的（除了 `test/`），hvigor 直接编译即可。已经实测：拷进
+`tools/ohos-probe/entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到
+`x25519`、`NoiseIkSession`、`createNoisePrologue`、`decodeTicket` 等符号。
+
+需要替换的只有两处：
 
 - **随机数**：`RandomSource` 由调用方注入，鸿蒙侧用 `cryptoFramework.createRandom()`。
-- **传输**：`FrameTransport` 是一个三方法的接口，鸿蒙侧用 `@ohos.net.socket` 的 TCP
+- **传输**：`FrameTransport` 是一个四方法的接口，鸿蒙侧用 `@ohos.net.socket` 的 TCP
   或 `@ohos.net.webSocket` 实现，字节口径与 Node 侧 `test/live.ts` 的 `openTcp` 相同
   （TCP 上是 `[uint32 大端长度][帧]`）。
+
+### ArkTS 的两个硬约束（写码时必须绕开）
+
+1. **没有 `TextEncoder`/`TextDecoder`** —— 用 `bytes.ts` 的 `utf8`/`fromUtf8`。
+2. **禁 `unknown`/隐式 any**（`arkts-no-any-unknown`）—— 一律用 `json.ts` 的
+   `JsonObject`，不要写 `Record<string, unknown>` 或 `let parsed: unknown`。
 
 ## 与 Dart 版本的关系
 

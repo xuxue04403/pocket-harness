@@ -66,3 +66,6 @@ packages/dsh_arkts/node_modules/
 packages/dsh_arkts/build/
 probe/_fixture.json
 probe/_tscheck/
+
+# 协议核心在鸿蒙工程里是拷贝来的，唯一来源是 packages/dsh_arkts/src（build.ps1 自动同步）
+tools/ohos-probe/entry/src/main/ets/core/

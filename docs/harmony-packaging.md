@@ -81,8 +81,16 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（73 KB，内含 `ets/modules.abc`）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（189 KB，内含 `ets/modules.abc` 73,640 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码拷进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`createNoisePrologue`、`decodeTicket`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **纯 Dart 层**：`dart test` 全覆盖，与平台无关。
+
+### ArkTS 不支持的两件事（真编译时报出来的）
+
+1. **没有 `TextEncoder`/`TextDecoder`**。鸿蒙的 lib 目标里不带 Web Encoding API，`new TextEncoder()` 直接是 `Cannot find name 'TextEncoder'`。`packages/dsh_arkts/src/bytes.ts` 里的 `utf8`/`fromUtf8` 是手写的（含代理对与非法序列的 U+FFFD 处理），用它们替代。
+2. **禁 `unknown`/隐式 any**（`arkts-no-any-unknown`）。`JSON.parse` 在鸿蒙 lib 里返回 `Object`，所以不能写 `let parsed: unknown = JSON.parse(...)`。`packages/dsh_arkts/src/json.ts` 的 `JsonObject`/`parseJsonObject`/`*Field` 就是为了收口这件事；协议内部一律用 `JsonObject` 而不是 `Record<string, unknown>`。
+
+改完这两处后，同一份源码在 Node 上跑金标向量、在鸿蒙上编译 HAP，两边都过。
 
 ### 最小可复现步骤（Windows，无需华为账号）
 

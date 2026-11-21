@@ -4,6 +4,7 @@
 // 两层共用同一份源码，所以「金标通过」对鸿蒙同样成立。
 
 export * from './bytes'
+export * from './json'
 export * from './sha256'
 export * from './curve25519'
 export * from './chacha20_poly1305'

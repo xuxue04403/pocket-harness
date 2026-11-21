@@ -6,7 +6,8 @@
 
 import { NOISE_PROTOCOL, NoiseIkSession } from './noise'
 import { hmacSha256, sha256 } from './sha256'
-import { decodeBase64Url, encodeBase64Url, utf8 } from './bytes'
+import { decodeBase64Url, encodeBase64Url, fromUtf8, utf8 } from './bytes'
+import { JsonObject, parseJsonObject } from './json'
 import type { FrameTransport } from './secure_channel'
 
 /** 明文 hello 的版本号，与 `host/link.js` 一致。 */
@@ -29,17 +30,14 @@ export function encodeHello(message: HelloMessage): Uint8Array {
 }
 
 export function decodeHello(bytes: Uint8Array): HelloMessage {
-  let parsed: unknown
+  let map: JsonObject
   try {
-    parsed = JSON.parse(new TextDecoder().decode(bytes))
+    map = parseJsonObject(fromUtf8(bytes))
   } catch {
-    throw new Error('the hello frame is not valid JSON')
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('the hello frame is not a JSON object')
   }
-  const map = parsed as Record<string, unknown>
-  if (map.v !== LINK_HELLO_VERSION) throw new Error(`unsupported hello version ${String(map.v)}`)
+  const version = map.v
+  if (version !== LINK_HELLO_VERSION) throw new Error(`unsupported hello version ${String(version)}`)
   const connection = map.connection
   const client = map.client
   if (typeof connection !== 'string' || connection.length === 0) throw new Error('the hello frame has no connection id')

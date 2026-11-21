@@ -3,7 +3,8 @@
 // 与 Dart 侧 `wire/{frame,fragment,envelope}.dart` 逐字节一致：帧是
 // `[kind][payload]`，分片头 17 字节 DSHF，信封是 JSON。
 
-import { concat } from './bytes'
+import { concat, utf8 } from './bytes'
+import { JsonObject, parseJsonBytes } from './json'
 
 /** 帧类型。数据面不走 JSON，只有 control 帧是明文。 */
 export const FRAME_KIND = {
@@ -164,47 +165,43 @@ export const PROTOCOL_VERSION = 1
 export interface Envelope {
   readonly type: string
   readonly id?: string
-  readonly payload: Record<string, unknown>
+  readonly payload: JsonObject
 }
 
-export function requestEnvelope(id: string, payload: Record<string, unknown>): Envelope {
+export function requestEnvelope(id: string, payload: JsonObject): Envelope {
   return { type: 'request', id, payload }
 }
 
-export function responseEnvelope(id: string, payload: Record<string, unknown>): Envelope {
+export function responseEnvelope(id: string, payload: JsonObject): Envelope {
   return { type: 'response', id, payload }
 }
 
-export function errorEnvelope(id: string, code: string, message: string, details: Record<string, unknown> = {}): Envelope {
+export function errorEnvelope(id: string, code: string, message: string, details: JsonObject = {}): Envelope {
   return { type: 'error', id, payload: { code, message, details } }
 }
 
-export function eventEnvelope(payload: Record<string, unknown>): Envelope {
+export function eventEnvelope(payload: JsonObject): Envelope {
   return { type: 'event', payload }
 }
 
 export function encodeEnvelope(value: Envelope): Uint8Array {
-  const body: Record<string, unknown> = { v: PROTOCOL_VERSION }
+  const body: JsonObject = { v: PROTOCOL_VERSION }
   if (value.id !== undefined) body.id = value.id
   body.type = value.type
   body.timestamp = Date.now()
   body.payload = value.payload
-  return new TextEncoder().encode(JSON.stringify(body))
+  return utf8(JSON.stringify(body))
 }
 
 export function decodeEnvelope(bytes: Uint8Array): Envelope {
-  const text = new TextDecoder().decode(bytes)
-  let parsed: unknown
+  let map: JsonObject
   try {
-    parsed = JSON.parse(text)
+    map = parseJsonBytes(bytes)
   } catch {
-    throw new Error('the envelope is not valid JSON')
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('the envelope is not a JSON object')
   }
-  const map = parsed as Record<string, unknown>
-  if (map.v !== PROTOCOL_VERSION) throw new Error(`unsupported envelope version ${String(map.v)}`)
+  const version = map.v
+  if (version !== PROTOCOL_VERSION) throw new Error(`unsupported envelope version ${String(version)}`)
   const type = map.type
   if (typeof type !== 'string') throw new Error('envelope is missing a type')
   const payload = map.payload
@@ -212,5 +209,5 @@ export function decodeEnvelope(bytes: Uint8Array): Envelope {
     throw new Error('envelope is missing a payload')
   }
   const id = map.id
-  return { type, id: typeof id === 'string' ? id : undefined, payload: payload as Record<string, unknown> }
+  return { type, id: typeof id === 'string' ? id : undefined, payload: payload as JsonObject }
 }

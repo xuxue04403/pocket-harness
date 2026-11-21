@@ -19,6 +19,14 @@ try {
   $env:DEVECO_SDK_HOME = $Sdk
   $env:OHOS_BASE_SDK_HOME = $Sdk
 
+  # 协议核心只有一份：从 packages/dsh_arkts 拷进来，避免这里躺着一份会漂移的副本。
+  $core = Join-Path $root 'entry\src\main\ets\core'
+  $source = Join-Path $root '..\..\packages\dsh_arkts\src'
+  if (Test-Path $source) {
+    Copy-Item (Join-Path $source '*.ts') $core -Force
+    Write-Host "synced protocol core from $source"
+  }
+
   node node_modules\@ohos\hvigor\bin\hvigor.js --mode module -p product=default assembleHap --no-daemon
   if ($LASTEXITCODE -ne 0) { throw "hvigor 退出码 $LASTEXITCODE" }
 

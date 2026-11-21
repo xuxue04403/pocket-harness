@@ -5,6 +5,8 @@
 
 import { connect } from 'node:net'
 import { readFileSync, existsSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 
 import { decodeBase64Url } from '../src/bytes'
@@ -73,9 +75,17 @@ function readText(path: string): string {
   return readFileSync(path, 'utf8').trim()
 }
 
+// 仓库根目录：这个文件在 packages/dsh_arkts/test，构建产物在 packages/dsh_arkts/build，
+// 两种情况下往上两级都能到根。用绝对路径，避免 npm 在不同工作目录下跑时找不到探针文件。
+function repoRoot(): string {
+  const here = dirname(fileURLToPath(import.meta.url))
+  return resolve(here, '..', '..', '..')
+}
+
 async function main(): Promise<void> {
-  const ticketPath = 'probe/_live-ticket.txt'
-  const identityPath = 'probe/_probe-identity.txt'
+  const root = repoRoot()
+  const ticketPath = join(root, 'probe', '_live-ticket.txt')
+  const identityPath = join(root, 'probe', '_probe-identity.txt')
   if (!existsSync(ticketPath)) throw new Error(`missing ${ticketPath}; run probe/live-ticket.mjs first`)
   if (!existsSync(identityPath)) throw new Error(`missing ${identityPath}`)
 

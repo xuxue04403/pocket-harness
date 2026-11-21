@@ -25,16 +25,108 @@ export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return different === 0
 }
 
-const textEncoder = new TextEncoder()
-const textDecoder = new TextDecoder()
+// UTF-8 编解码。
+//
+// ArkTS 里没有 `TextEncoder`/`TextDecoder`（它们不在鸿蒙的 lib 目标里），
+// 所以这两段必须自己写。协议只在 prologue、hello 与信封 JSON 上用得到，
+// 但用错一个字节就会让握手分叉。
 
+/** 把字符串编成 UTF-8 字节。 */
 export function utf8(text: string): Uint8Array {
-  return textEncoder.encode(text)
+  const out: number[] = []
+  for (let i = 0; i < text.length; i++) {
+    let code = text.charCodeAt(i)
+    // 代理对拼成一个码点；孤立代理按 U+FFFD 处理，避免产生非法 UTF-8。
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00)
+        i++
+      } else {
+        code = 0xfffd
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      code = 0xfffd
+    }
+    if (code < 0x80) {
+      out.push(code)
+    } else if (code < 0x800) {
+      out.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f))
+    } else if (code < 0x10000) {
+      out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+    } else {
+      out.push(
+        0xf0 | (code >> 18),
+        0x80 | ((code >> 12) & 0x3f),
+        0x80 | ((code >> 6) & 0x3f),
+        0x80 | (code & 0x3f),
+      )
+    }
+  }
+  return new Uint8Array(out)
 }
 
+/** 把 UTF-8 字节解回字符串。非法序列按 U+FFFD 处理。 */
 export function fromUtf8(bytes: Uint8Array): string {
-  return textDecoder.decode(bytes)
+  let out = ''
+  let i = 0
+  const continuation = (offset: number): number => {
+    const byte = bytes[offset]
+    if (byte === undefined || (byte & 0xc0) !== 0x80) return -1
+    return byte & 0x3f
+  }
+  while (i < bytes.length) {
+    const lead = bytes[i]
+    if (lead < 0x80) {
+      out += String.fromCharCode(lead)
+      i += 1
+      continue
+    }
+    if (lead >= 0xc0 && lead <= 0xdf) {
+      const b1 = continuation(i + 1)
+      if (b1 < 0) {
+        out += '\uFFFD'
+        i += 1
+        continue
+      }
+      out += String.fromCharCode(((lead & 0x1f) << 6) | b1)
+      i += 2
+      continue
+    }
+    if (lead >= 0xe0 && lead <= 0xef) {
+      const b1 = continuation(i + 1)
+      const b2 = continuation(i + 2)
+      if (b1 < 0 || b2 < 0) {
+        out += '\uFFFD'
+        i += 1
+        continue
+      }
+      const code = ((lead & 0x0f) << 12) | (b1 << 6) | b2
+      out += String.fromCharCode(code)
+      i += 3
+      continue
+    }
+    if (lead >= 0xf0 && lead <= 0xf4) {
+      const b1 = continuation(i + 1)
+      const b2 = continuation(i + 2)
+      const b3 = continuation(i + 3)
+      if (b1 < 0 || b2 < 0 || b3 < 0) {
+        out += '\uFFFD'
+        i += 1
+        continue
+      }
+      const code = ((lead & 0x07) << 18) | (b1 << 12) | (b2 << 6) | b3
+      const shifted = code - 0x10000
+      out += String.fromCharCode(0xd800 + (shifted >> 10), 0xdc00 + (shifted & 0x3ff))
+      i += 4
+      continue
+    }
+    out += '\uFFFD'
+    i += 1
+  }
+  return out
 }
+
 
 /** base64url 编码，不带填充 —— 配对码与金标向量都用这个口径。 */
 export function encodeBase64Url(bytes: Uint8Array): string {

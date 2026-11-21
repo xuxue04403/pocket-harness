@@ -3,7 +3,8 @@
 // 票据键名与 Dart 侧 `pairing.dart` 完全一致（v/id/key/name/lan/relay/room/rtok/
 // secret/exp），因为它是手机与 Host 之间唯一的共享格式。
 
-import { decodeBase64Url, encodeBase64Url, equalBytes } from './bytes'
+import { decodeBase64Url, encodeBase64Url, equalBytes, utf8 } from './bytes'
+import { JsonObject, parseJsonBytes } from './json'
 
 /** 配对码的 URL scheme。 */
 export const PAIRING_SCHEME = 'pocketharness'
@@ -35,7 +36,7 @@ export function hasRelay(ticket: PairingTicket): boolean {
   return ticket.relayUrl !== null && ticket.relayRoom !== null && ticket.relayToken !== null
 }
 
-export function ticketToJson(ticket: PairingTicket): Record<string, unknown> {
+export function ticketToJson(ticket: PairingTicket): JsonObject {
   return {
     v: ticket.version,
     id: ticket.hostDeviceId,
@@ -52,7 +53,7 @@ export function ticketToJson(ticket: PairingTicket): Record<string, unknown> {
 
 /** 编码成 `pocketharness://pair?t=<base64url json>`。 */
 export function encodeTicket(ticket: PairingTicket): string {
-  const body = encodeBase64Url(new TextEncoder().encode(JSON.stringify(ticketToJson(ticket))))
+  const body = encodeBase64Url(utf8(JSON.stringify(ticketToJson(ticket))))
   return `${PAIRING_SCHEME}://pair?t=${body}`
 }
 
@@ -62,16 +63,12 @@ export function decodeTicket(text: string): PairingTicket {
   if (!trimmed.startsWith(prefix)) {
     throw new Error(`a pairing code starts with ${prefix}`)
   }
-  let parsed: unknown
+  let map: JsonObject
   try {
-    parsed = JSON.parse(new TextDecoder().decode(decodeBase64Url(trimmed.slice(prefix.length))))
+    map = parseJsonBytes(decodeBase64Url(trimmed.slice(prefix.length)))
   } catch {
     throw new Error('the pairing code is not readable')
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('the pairing code is not a JSON object')
-  }
-  const map = parsed as Record<string, unknown>
   if (map.v !== PAIRING_TICKET_VERSION) throw new Error(`unsupported pairing code version ${String(map.v)}`)
 
   const id = map.id
@@ -93,7 +90,7 @@ export function decodeTicket(text: string): PairingTicket {
     hostDeviceId: id,
     hostPublicKey: publicKey,
     hostName: typeof name === 'string' && name.length > 0 ? name : 'DeepSeek Harness',
-    lanEndpoints: Array.isArray(lan) ? lan.filter((entry): entry is string => typeof entry === 'string') : [],
+    lanEndpoints: Array.isArray(lan) ? (lan as Object[]).filter((entry): entry is string => typeof entry === 'string') : [],
     relayUrl: typeof relay === 'string' && relay.length > 0 ? relay : null,
     relayRoom: typeof room === 'string' && room.length > 0 ? room : null,
     relayToken: typeof rtok === 'string' && rtok.length > 0 ? rtok : null,

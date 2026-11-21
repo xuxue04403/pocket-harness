@@ -12,6 +12,7 @@ import {
   type Envelope,
 } from './wire'
 import type { SecureChannel } from './secure_channel'
+import type { JsonObject } from './json'
 
 export const DEFAULT_STREAM_OPEN_ENDPOINT = 'link/stream.open'
 export const DEFAULT_STREAM_CLOSE_ENDPOINT = 'link/stream.close'
@@ -19,9 +20,9 @@ export const DEFAULT_STREAM_CLOSE_ENDPOINT = 'link/stream.close'
 /** Host 返回的错误。 */
 export class RpcError extends Error {
   readonly code: string
-  readonly details: Record<string, unknown>
+  readonly details: JsonObject
 
-  constructor(code: string, message: string, details: Record<string, unknown> = {}) {
+  constructor(code: string, message: string, details: JsonObject = {}) {
     super(message)
     this.name = 'RpcError'
     this.code = code
@@ -30,13 +31,13 @@ export class RpcError extends Error {
 }
 
 interface PendingCall {
-  readonly resolve: (value: Record<string, unknown>) => void
+  readonly resolve: (value: JsonObject) => void
   readonly reject: (error: Error) => void
   readonly timer: ReturnType<typeof setTimeout> | undefined
 }
 
 interface PendingStream {
-  readonly push: (value: Record<string, unknown>) => void
+  readonly push: (value: JsonObject) => void
   readonly finish: () => void
   readonly fail: (error: Error) => void
   readonly closeEndpoint: string
@@ -72,13 +73,13 @@ export class RpcClient {
   /** 发一条 unary 请求并等响应。 */
   async call(
     endpoint: string,
-    args: Record<string, unknown> = {},
+    args: JsonObject = {},
     timeoutMs = this.defaultTimeoutMs,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<JsonObject> {
     if (this.closed) throw new Error('the RPC client is closed')
     const id = `c${this.nextCallId++}`
     const envelope = requestEnvelope(id, { endpoint, payload: { args } })
-    return new Promise<Record<string, unknown>>((resolve, reject) => {
+    return new Promise<JsonObject>((resolve, reject) => {
       const timer = timeoutMs > 0
         ? setTimeout(() => {
           this.calls.delete(id)
@@ -98,12 +99,12 @@ export class RpcClient {
    */
   async *openStream(
     endpoint: string,
-    args: Record<string, unknown> = {},
+    args: JsonObject = {},
     options: { readonly timeoutMs?: number; readonly openEndpoint?: string; readonly closeEndpoint?: string } = {},
-  ): AsyncGenerator<Record<string, unknown>> {
+  ): AsyncGenerator<JsonObject> {
     const openEndpoint = options.openEndpoint ?? DEFAULT_STREAM_OPEN_ENDPOINT
     const closeEndpoint = options.closeEndpoint ?? DEFAULT_STREAM_CLOSE_ENDPOINT
-    const queue: Record<string, unknown>[] = []
+    const queue: JsonObject[] = []
     let done = false
     let failure: Error | null = null
     let notify: (() => void) | null = null
@@ -213,7 +214,7 @@ export class RpcClient {
           const code = typeof envelope.payload.code === 'string' ? envelope.payload.code : 'HOST_ERROR'
           const message = typeof envelope.payload.message === 'string' ? envelope.payload.message : 'the Host refused this call'
           const details = envelope.payload.details
-          pending.reject(new RpcError(code, message, (details !== null && typeof details === 'object' && !Array.isArray(details) ? details : {}) as Record<string, unknown>))
+          pending.reject(new RpcError(code, message, (details !== null && typeof details === 'object' && !Array.isArray(details) ? details : {}) as JsonObject))
         } else {
           pending.resolve(envelope.payload)
         }
@@ -243,7 +244,7 @@ export class RpcClient {
     if (stream === undefined) return
     const failure = envelope.payload.error
     if (failure !== null && typeof failure === 'object' && !Array.isArray(failure)) {
-      const map = failure as Record<string, unknown>
+      const map = failure as JsonObject
       stream.fail(new RpcError(
         typeof map.code === 'string' ? map.code : 'HOST_ERROR',
         typeof map.message === 'string' ? map.message : 'the stream failed',
@@ -258,7 +259,7 @@ export class RpcClient {
     }
     const value = envelope.payload.value
     stream.push(value !== null && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
+      ? (value as JsonObject)
       : { value })
   }
 }
