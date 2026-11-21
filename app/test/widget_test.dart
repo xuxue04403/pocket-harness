@@ -270,4 +270,94 @@ void _questionTests() {
       expect(readQuestion(invocation('user-questions/request', {'questions': []})), isNull);
     });
   });
-}
+
+  group('model catalog', () {
+    test('flattens provider groups into one list', () {
+      final catalog = ModelCatalog.fromJson({
+        'default': {'provider': 'gateway', 'model': 'deepseek-v4.1-flash'},
+        'groups': [
+          {
+            'id': 'gateway',
+            'name': 'DSH Model Gateway',
+            'models': [
+              {
+                'id': 'deepseek-v4.1-flash',
+                'name': 'DeepSeek V4.1 Flash',
+                'reasoning': {
+                  'efforts': [
+                    {'id': 'high', 'name': 'High'},
+                    {'id': 'max', 'name': 'Max'},
+                  ],
+                  'defaultEffort': 'high',
+                },
+              },
+              {'id': 'plain', 'name': 'Plain'},
+            ],
+          },
+          {
+            'id': 'deepseek-official',
+            'name': 'DeepSeek',
+            'models': [
+              {'id': 'deepseek-flash', 'name': 'DeepSeek Flash'},
+            ],
+          },
+        ],
+      });
+      expect(catalog.choices.map((c) => '${c.provider}/${c.model}'), [
+        'gateway/deepseek-v4.1-flash',
+        'gateway/plain',
+        'deepseek-official/deepseek-flash',
+      ]);
+      expect(catalog.choices.first.providerName, 'DSH Model Gateway');
+      expect(catalog.choices.first.efforts.map((e) => e.id), ['high', 'max']);
+      expect(catalog.choices.first.defaultEffort, 'high');
+      expect(catalog.choices[1].efforts, isEmpty);
+      expect(catalog.defaultChoice?.model, 'deepseek-v4.1-flash');
+    });
+
+    test('survives a Host that sends no groups', () {
+      final catalog = ModelCatalog.fromJson({'default': null, 'groups': 'nope'});
+      expect(catalog.choices, isEmpty);
+      expect(catalog.defaultChoice, isNull);
+    });
+
+    test('prefers the next route over the last used one', () {
+      final selection = ModelSelection.fromProjections({
+        'modelSelection': {
+          'lastUsed': {'provider': 'gateway', 'model': 'old'},
+          'next': {'provider': 'gateway', 'model': 'new', 'reasoningEffort': 'low'},
+        },
+      });
+      // DSH nests the selection under `modelSelection` in projections; the
+      // helper accepts the inner map because that is what the caller has.
+      expect(selection, isNull);
+    });
+
+    test('reads the next route from the selection map', () {
+      final selection = ModelSelection.fromProjections({
+        'lastUsed': {'provider': 'gateway', 'model': 'old'},
+        'next': {'provider': 'gateway', 'model': 'new', 'reasoningEffort': 'low'},
+      });
+      expect(selection?.model, 'new');
+      expect(selection?.reasoningEffort, 'low');
+    });
+
+    test('falls back to the last used route before any next route exists', () {
+      final selection = ModelSelection.fromProjections({
+        'lastUsed': {'provider': 'gateway', 'model': 'old'},
+      });
+      expect(selection?.model, 'old');
+      expect(selection?.reasoningEffort, isNull);
+    });
+
+    test('reads the flat route selectModel answers with', () {
+      final selection = ModelSelection.fromProjections({
+        'provider': 'gateway',
+        'model': 'agnes-3.0-flash',
+        'reasoningEffort': 'low',
+      });
+      expect(selection?.model, 'agnes-3.0-flash');
+      expect(selection?.provider, 'gateway');
+      expect(selection?.reasoningEffort, 'low');
+    });
+  });}

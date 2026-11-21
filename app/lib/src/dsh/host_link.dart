@@ -47,6 +47,141 @@ class SessionSummary {
   }
 }
 
+/// One model the Host can route to.
+class ModelChoice {
+  const ModelChoice({
+    required this.provider,
+    required this.providerName,
+    required this.model,
+    required this.name,
+    this.description,
+    this.efforts = const [],
+    this.defaultEffort,
+  });
+
+  final String provider;
+  final String providerName;
+  final String model;
+  final String name;
+  final String? description;
+
+  /// Reasoning efforts this exact route accepts, in provider order.
+  final List<ModelEffort> efforts;
+  final String? defaultEffort;
+
+  String get label => '$name · $providerName';
+}
+
+/// One reasoning effort a model accepts.
+class ModelEffort {
+  const ModelEffort({required this.id, required this.name, this.description});
+
+  final String id;
+  final String name;
+  final String? description;
+}
+
+/// The whole catalog, flattened for a picker.
+class ModelCatalog {
+  const ModelCatalog({required this.choices, required this.defaultChoice});
+
+  final List<ModelChoice> choices;
+
+  /// What the Host picks for a session that has never chosen; may be absent
+  /// from [choices] when its provider is currently unroutable.
+  final ({String provider, String model})? defaultChoice;
+
+  /// Reads `session/modelCatalog`. Every provider group is flattened, because a
+  /// phone picker shows one flat list rather than the desktop's grouped menu.
+  static ModelCatalog fromJson(Map<String, Object?> value) {
+    final choices = <ModelChoice>[];
+    final groups = value['groups'];
+    if (groups is List) {
+      for (final group in groups) {
+        if (group is! Map<String, Object?>) continue;
+        final provider = group['id'];
+        final providerName = group['name'];
+        final models = group['models'];
+        if (provider is! String || models is! List) continue;
+        for (final model in models) {
+          if (model is! Map<String, Object?>) continue;
+          final id = model['id'];
+          if (id is! String) continue;
+          final reasoning = model['reasoning'];
+          final efforts = <ModelEffort>[];
+          String? defaultEffort;
+          if (reasoning is Map<String, Object?>) {
+            final raw = reasoning['efforts'];
+            if (raw is List) {
+              for (final effort in raw) {
+                if (effort is! Map<String, Object?>) continue;
+                final effortId = effort['id'];
+                if (effortId is! String) continue;
+                efforts.add(ModelEffort(
+                  id: effortId,
+                  name: effort['name'] is String ? effort['name']! as String : effortId,
+                  description: effort['description'] is String ? effort['description']! as String : null,
+                ));
+              }
+            }
+            final fallback = reasoning['defaultEffort'];
+            if (fallback is String) defaultEffort = fallback;
+          }
+          choices.add(ModelChoice(
+            provider: provider,
+            providerName: providerName is String ? providerName : provider,
+            model: id,
+            name: model['name'] is String ? model['name']! as String : id,
+            description: model['description'] is String ? model['description']! as String : null,
+            efforts: efforts,
+            defaultEffort: defaultEffort,
+          ));
+        }
+      }
+    }
+    final fallback = value['default'];
+    ({String provider, String model})? defaultChoice;
+    if (fallback is Map<String, Object?>) {
+      final provider = fallback['provider'];
+      final model = fallback['model'];
+      if (provider is String && model is String) {
+        defaultChoice = (provider: provider, model: model);
+      }
+    }
+    return ModelCatalog(choices: choices, defaultChoice: defaultChoice);
+  }
+}
+
+/// The model route a session is currently using.
+class ModelSelection {
+  const ModelSelection({required this.provider, required this.model, this.reasoningEffort});
+
+  final String provider;
+  final String model;
+  final String? reasoningEffort;
+
+  /// Reads a model route from either shape DSH returns.
+  ///
+  /// `session/projections` nests two routes under `modelSelection`: `next` is
+  /// what the following turn will use, `lastUsed` what the previous one did.
+  /// `session/selectModel` instead answers with the route itself, flat. The
+  /// picker shows `next`, because that is what a change would replace.
+  static ModelSelection? fromProjections(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    final map = value['provider'] is String ? value : (value['next'] ?? value['lastUsed']);
+    if (map is! Map<String, Object?>) return null;
+    final provider = map['provider'];
+    final model = map['model'];
+    if (provider is! String || model is! String) return null;
+    final effort = map['reasoningEffort'];
+    return ModelSelection(
+      provider: provider,
+      model: model,
+      reasoningEffort: effort is String ? effort : null,
+    );
+  }
+}
+
 /// One rendered row of a session transcript.
 ///
 /// The transcript is built from DSH session events rather than from a bespoke
@@ -350,6 +485,44 @@ class HostLink {
     await _client.rpc.call('session/cancel', {
       'request': {'sessionId': sessionId},
     });
+  }
+
+  /// Every model this Host can route to right now.
+  Future<ModelCatalog> modelCatalog() async {
+    final value = await _client.rpc.call('session/modelCatalog', const {});
+    return ModelCatalog.fromJson(value);
+  }
+
+  /// The model route one session is currently on, or null when the Host has not
+  /// projected one yet (a brand-new session before its first turn).
+  Future<ModelSelection?> selection(String sessionId) async {
+    final value = await _client.rpc.call('session/projections', {
+      'request': {'sessionId': sessionId},
+    });
+    final values = value['values'];
+    return ModelSelection.fromProjections(values);
+  }
+
+  /// Points one session at [choice], optionally pinning a reasoning effort.
+  ///
+  /// This is a per-session override: the Host's own default stays untouched, so
+  /// a new session still starts where the desktop would.
+  Future<ModelSelection> selectModel(
+    String sessionId,
+    ModelChoice choice, {
+    String? reasoningEffort,
+  }) async {
+    final value = await _client.rpc.call('session/selectModel', {
+      'request': {
+        'sessionId': sessionId,
+        'provider': choice.provider,
+        'model': choice.model,
+        'reasoningEffort': ?reasoningEffort,
+      },
+    });
+    final selected = ModelSelection.fromProjections(value['selected']);
+    if (selected == null) throw StateError('the Host did not confirm the model selection');
+    return selected;
   }
 
   /// The questions this Host is waiting on, as they arrive.

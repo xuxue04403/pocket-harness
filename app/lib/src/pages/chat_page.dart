@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../dsh/host_link.dart';
 import '../dsh/questions.dart';
+import 'model_sheet.dart';
 
 /// One conversation: opening snapshot, live events, and the composer.
 ///
@@ -48,11 +49,52 @@ class _ChatPageState extends State<ChatPage> {
   final List<PendingQuestion> _questions = [];
   StreamSubscription<PendingQuestion>? _questionStream;
 
+  /// The model route this session is on, shown in the app bar.
+  ///
+  /// DSH projects the selection rather than returning it from `follow`, so this
+  /// is read once on open and refreshed whenever the person changes it here. A
+  /// change made on the desktop mid-conversation stays unseen until the next
+  /// open, which keeps the app bar from flickering on every frame.
+  ModelSelection? _selection;
+  bool _loadingSelection = true;
+
   @override
   void initState() {
     super.initState();
     _start();
     _listenForQuestions();
+    unawaited(_loadSelection());
+  }
+
+  Future<void> _loadSelection() async {
+    try {
+      final selection = await widget.link.selection(widget.sessionId);
+      if (!mounted) return;
+      setState(() {
+        _selection = selection;
+        _loadingSelection = false;
+      });
+    } on Object {
+      // A missing selection is cosmetic: the picker still works, and the
+      // transcript is unaffected, so this never becomes an error banner.
+      if (!mounted) return;
+      setState(() => _loadingSelection = false);
+    }
+  }
+
+  Future<void> _pickModel() async {
+    final selected = await showModelPicker(
+      context,
+      catalog: widget.link.modelCatalog(),
+      current: Future.value(_selection),
+      onSelect: (choice, effort) => widget.link.selectModel(
+        widget.sessionId,
+        choice,
+        reasoningEffort: effort,
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _selection = selected);
   }
 
   void _listenForQuestions() {
@@ -237,8 +279,24 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            _AppBarModelLine(
+              selection: _selection,
+              loading: _loadingSelection,
+              onTap: _pickModel,
+            ),
+          ],
+        ),
         actions: [
+          IconButton(
+            onPressed: _pickModel,
+            icon: const Icon(Icons.tune),
+            tooltip: '选择模型',
+          ),
           IconButton(
             onPressed: _cancel,
             icon: const Icon(Icons.stop_circle_outlined),
@@ -290,6 +348,51 @@ class _ChatPageState extends State<ChatPage> {
           onLoadOlder: index == 0 ? _loadOlder : null,
         );
       },
+    );
+  }
+}
+
+/// The model route, under the session title.
+///
+/// It reads as a subtitle because that is what it is: a property of this
+/// conversation, tappable to change it.
+class _AppBarModelLine extends StatelessWidget {
+  const _AppBarModelLine({required this.selection, required this.loading, required this.onTap});
+
+  final ModelSelection? selection;
+  final bool loading;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final label = loading
+        ? '读取模型…'
+        : selection == null
+            ? '默认模型 · 点击选择'
+            : [selection!.model, if (selection!.reasoningEffort != null) selection!.reasoningEffort!]
+                .join(' · ');
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            Icon(Icons.expand_more, size: 14, color: theme.colorScheme.onSurfaceVariant),
+          ],
+        ),
+      ),
     );
   }
 }
