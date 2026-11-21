@@ -58,7 +58,7 @@ probe/_relay-ticket*.txt
 probe/_*.out
 probe/_*.err
 probe/_ui*.xml
-probe/_msg.txt
+probe/_msg*.txt
 probe/_apkcheck/
 
 # TypeScript protocol core build output
@@ -69,3 +69,5 @@ probe/_tscheck/
 
 # 协议核心在鸿蒙工程里是拷贝来的，唯一来源是 packages/dsh_arkts/src（build.ps1 自动同步）
 tools/ohos-probe/entry/src/main/ets/core/
+tools/ohos-probe/*.ts
+!tools/ohos-probe/hvigorfile.ts
