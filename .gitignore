@@ -17,6 +17,11 @@ node_modules/
 relay/node_modules/
 probe/node_modules/
 
+# 鸿蒙探针的构建产物与本地 SDK 指针（图标是构建输入，保留入库）
+tools/ohos-probe/.hvigor/
+tools/ohos-probe/entry/build/
+tools/ohos-probe/local.properties
+
 # 本地工具链（体积大、可重建，不入库）
 toolchain/
 

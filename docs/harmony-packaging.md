@@ -1,6 +1,8 @@
 # 鸿蒙 7.0（HarmonyOS / OpenHarmony API 26）打包说明
 
-**结论先行**：手机端代码已经是跨平台的纯 Dart，鸿蒙只差一个打包目标。但**Flutter 的鸿蒙产物无法在 Windows 上生成**——`gen_snapshot` 与 `frontend_server` 的鸿蒙版只发布了 macOS arm64。因此本仓库在 Windows 上无法产出 HAP，需要一台 macOS（Apple Silicon）或对应 CI runner。
+**结论先行**：手机端代码已经是跨平台的纯 Dart，鸿蒙只差一个打包目标。**Flutter 的鸿蒙产物（带 Dart AOT 的完整 HAP）无法在 Windows 上生成**——`gen_snapshot` 与 `frontend_server` 的鸿蒙版只发布了 macOS arm64，因此完整的 App 需要一台 macOS（Apple Silicon）或对应 CI runner。
+
+但**ArkTS 宿主侧可以在 Windows 上真编译出 HAP**，这条路已在本仓库实测跑通（见下文「在 Windows 上能做的部分」）：OpenHarmony 7.0 的公开 SDK 自带 Windows 工具链，`hvigor` 也能从 `repo.harmonyos.com` 免登录安装。它能证明鸿蒙宿主的工程结构、资源、权限声明与 ArkTS 代码是对的，只缺 Dart AOT 那一半。
 
 这条结论不是推测：`dsh-Go/app/ohos/README.md` 用自己的构建矩阵写明了同一件事。我们读过它的文档来了解边界，没有使用它的代码（它是 AGPL-3.0）。
 
@@ -75,12 +77,61 @@ flutter build hap --release \
 hdc install -r entry-default-signed.hap
 ```
 
-## 在 Windows 上能做的部分
+## 在 Windows 上能做的部分（已实测跑通，可产出未签名 HAP）
 
-不需要 macOS 也能验证的：
+不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 可以产出未签名 HAP，`compileSdkType` 为 OpenHarmony。需要 OpenHarmony 7.0 公开 SDK（3.2 GB）与 `repo.harmonyos.com/npm` 上的 `@ohos/hvigor@6.26.20`。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（73 KB，内含 `ets/modules.abc`）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **纯 Dart 层**：`dart test` 全覆盖，与平台无关。
+
+### 最小可复现步骤（Windows，无需华为账号）
+
+样例工程在 `tools/ohos-probe`，可直接照着搭：
+
+```powershell
+# 1. 公开 SDK（约 3.2 GB，免登录）
+#    https://repo.huaweicloud.com/openharmony/os/7.0-Release/ohos-sdk-windows_linux-public.tar.gz
+#    解压后 windows/ 下有 5 个 zip：ets / js / native / previewer / toolchains
+
+# 2. 关键：SDK 必须按 <root>/<完整版本号>/<组件> 布局，否则 hvigor 报 00308018
+#    "The SDK management mode has changed"
+$sdk = 'D:\ohos-sdk'
+foreach ($c in 'ets','js','native','toolchains','previewer') {
+  New-Item -ItemType Directory -Force "$sdk\26.0.0\$c"
+  tar.exe -xf "<解压目录>\windows\$c-windows-x64-26.0.0.38-Beta.zip" -C "$sdk\26.0.0\$c" --strip-components=1
+}
+
+# 3. hvigor（repo.harmonyos.com 无需登录）
+npm install --registry=https://repo.harmonyos.com/npm `
+  @ohos/hvigor@6.26.20 @ohos/hvigor-ohos-plugin@6.26.20
+
+# 4. 构建
+$env:DEVECO_SDK_HOME = $sdk
+$env:OHOS_BASE_SDK_HOME = $sdk
+node node_modules\@ohos\hvigor\bin\hvigor.js --mode module -p product=default assembleHap --no-daemon
+```
+
+### 六个必踩的坑（都有原文报错）
+
+1. `00303034` — 产品里必须显式写 `compileSdkVersion`。
+2. `00303024` — 必须有 `hvigor/hvigor-config.json5` 且 `modelVersion` 非空（这里用 `6.0.0`）。
+3. `00306042` — **API 26+ 的 `compileSdkVersion`/`compatibleSdkVersion`/`targetSdkVersion` 必须是字符串 `"26.0.0"`**，写数字 `26` 直接失败（API 10–25 才是数字）。
+4. `00303208` — 需要 `local.properties` 的 `sdk.dir` 或环境变量 `OHOS_BASE_SDK_HOME`，两者都设更稳。
+5. `00304067` — 必须有 `AppScope/app.json5`。
+6. `00308018` — 两个不同原因共用这个错误码：
+   - **SDK 布局**：扁平 `ets/ js/ native/ toolchains/` 会被判为旧的管理模式，必须改成 `<root>/26.0.0/<组件>`。
+   - **缺 previewer**：布局对了以后会报 `The SDK license agreement is not accepted … re-download the Previewer:26.0.0.38 SDK`。公开 SDK 的 `windows/` 里有这个 zip，放进去即可，**不需要真的登录**。
+
+另外 `module.json5` 的 `deviceTypes` 在纯 OpenHarmony SDK 下只能写 `"default"`；写 `"phone"` 会报 `00303060`（各设备 systemCapability 交集为空）与 `The systemCapability set corresponding to the 'phone' is not found`。
+
+### 产物核对
+
+```powershell
+tar.exe -tf entry\build\default\outputs\default\entry-default-unsigned.hap
+# module.json / resources.index / ets/modules.abc / pack.info / rpcid.sc …
+```
+
+`ets/modules.abc` 里能直接搜到 ArkUI 页面的字符串与 bundleName，说明 ArkTS 真的被编译进了字节码，不是空壳。签名后才能 `hdc install`，签名材料（AGC 证书 + profile）不入库。
 
 ## 二期路线建议
 
