@@ -159,6 +159,24 @@ class _SessionsPageState extends State<SessionsPage> {
     if (mounted) _refresh();
   }
 
+  Future<void> _rename(SessionSummary session) async {
+    final link = _link;
+    if (link == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final title = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameDialog(initial: session.title),
+    );
+    final trimmed = title?.trim() ?? '';
+    if (trimmed.isEmpty || trimmed == session.title || !mounted) return;
+    try {
+      await link.rename(session.sessionId, trimmed);
+      if (mounted) await _refresh();
+    } on Object catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(_describe(error))));
+    }
+  }
+
   @override
   void dispose() {
     final link = _link;
@@ -242,6 +260,7 @@ class _SessionsPageState extends State<SessionsPage> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   onTap: () => _open(session.sessionId, session.title),
+                  onLongPress: () => _rename(session),
                 );
               },
             ),
@@ -275,6 +294,49 @@ String _basename(String path) {
   final cut = trimmed.lastIndexOf(RegExp(r'[\\/]'));
   final name = cut == -1 ? trimmed : trimmed.substring(cut + 1);
   return name.isEmpty ? trimmed : name;
+}
+
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _controller = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('重命名会话'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 120,
+        decoration: const InputDecoration(
+          labelText: '标题',
+          hintText: '留空则取消',
+        ),
+        onSubmitted: (value) => Navigator.of(context).pop(value),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
 }
 
 class _ConnectionProblem extends StatelessWidget {

@@ -799,6 +799,19 @@ class HostLink {
     });
   }
 
+  /// Renames one session, returning the title the Host normalized it to.
+  ///
+  /// The Host decides the final spelling (it trims and bounds the text), so the
+  /// caller must show this value rather than what was typed.
+  Future<String> rename(String sessionId, String title) async {
+    final value = await _client.rpc.call('session/rename', {
+      'request': {'sessionId': sessionId, 'title': title},
+    });
+    final accepted = value['title'];
+    if (accepted is! String || accepted.isEmpty) return title.trim();
+    return accepted;
+  }
+
   /// Every model this Host can route to right now.
   Future<ModelCatalog> modelCatalog() async {
     final value = await _client.rpc.call('session/modelCatalog', const {});
