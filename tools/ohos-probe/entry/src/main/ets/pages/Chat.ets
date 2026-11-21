@@ -747,6 +747,16 @@ struct Chat {
             this.skillPanel = !this.skillPanel
             this.modelPanel = false
           })
+        Text('工作区文件')
+          .fontSize(12)
+          .fontColor('#0A7A4F')
+          .decoration({ type: TextDecorationType.Underline, color: '#0A7A4F' })
+          .onClick(() => {
+            router.pushUrl({
+              url: 'pages/Files',
+              params: { ticketText: this.ticketText, sessionId: this.sessionId },
+            })
+          })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })

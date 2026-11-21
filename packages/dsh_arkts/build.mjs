@@ -16,6 +16,7 @@ await build({ ...shared, entryPoints: ['test/models.ts'], outfile: 'build/models
 await build({ ...shared, entryPoints: ['test/agent_presets.ts'], outfile: 'build/agent_presets.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/skills.ts'], outfile: 'build/skills.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/settings.ts'], outfile: 'build/settings.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/workspace.ts'], outfile: 'build/workspace.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live.ts'], outfile: 'build/live.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_transcript.ts'], outfile: 'build/live_transcript.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_relay.ts'], outfile: 'build/live_relay.mjs', platform: 'node', target: 'es2022' })
@@ -23,3 +24,4 @@ await build({ ...shared, entryPoints: ['test/live_models.ts'], outfile: 'build/l
 await build({ ...shared, entryPoints: ['test/live_presets.ts'], outfile: 'build/live_presets.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_skills.ts'], outfile: 'build/live_skills.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_settings.ts'], outfile: 'build/live_settings.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/live_workspace.ts'], outfile: 'build/live_workspace.mjs', platform: 'node', target: 'es2022' })

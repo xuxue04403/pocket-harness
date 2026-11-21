@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（679 KB，内含 `ets/modules.abc` 408,684 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（765 KB，内含 `ets/modules.abc` 473,556 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -252,6 +252,30 @@ Host。三条规矩值得单独记：
 顺带一个只有真链路会暴露的细节：冲突错误的文本在不同构建里长得不一样 —— 有时是
 `settings/conflict …`，有时只有一句 `settings namespace "x" changed since it was read`，
 所以 `describeSettingsError` 两种都要认（第一版只认前者，真 Host 上直接没翻成中文）。
+
+### 工作区文件也能在手机上看
+
+对话页标题下方还有一处「工作区文件」，进 `pages/Files.ets`：列目录、按名字搜、
+按 400 行分页读文本，只读。目录前缀是会话页开的那个会话，所以看到的就是这个会话
+的工作区。
+
+数据侧在 `src/workspace.ts`，`test/workspace.ts` 钉形状，`test/live_workspace.ts`
+打真 Host（真列出 `.git`/`app`/`docs`、真读 `README.md` 前 20 行、真搜 `pocket`）。
+四个坑都是实测踩出来的：
+
+- **`workspaceFileScopeId` 的值是 Session id，不是工作区 id**。Host 自己据会话推出
+  工作区根，所以手机只能看到这个会话拥有的目录，也永远出不去（`'/'` 会被拒）。
+- **根目录必须传 `'.'`**。空串是 `path is required`，`'/'` 是 `outside-workspace` ——
+  第一版传空串，模拟器上整页显示「读不到这个目录」。
+- **`search` 的四个字段全部必填**（`query`/`excludedPaths`/`includeHidden`/
+  `respectGitignore`），少一个是边界校验失败；空查询在客户端就拦住，否则等于把整个
+  工作区扫一遍。
+- **参数是扁平的命名参数**，包一层 `request` 会得到 `args fields do not match the
+  descriptor`（只有 `search` 的第二个字段才叫 `request`）。
+
+还有一个和设置页同款的坑：越界错误的文本也有两种写法 —— 有时带
+`workspace-file/outside-workspace` 前缀，有时只有一句 `"/" is outside the workspace`。
+`describeWorkspaceError` 两种都认（同样是被 `test/live_workspace.ts` 逼出来的）。
 
 ## 二期路线建议
 

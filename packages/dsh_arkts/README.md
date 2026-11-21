@@ -32,10 +32,11 @@
 | `src/agent_presets.ts` | 智能体预设与新建会话的参数：「跟随电脑」与「显式选默认预设」要能区分 |
 | `src/skills.ts` | 会话可用的技能清单与 `/name` 插入文本 |
 | `src/settings.ts` | 电脑的全局设置：revision 校验、打码密钥、写回后的新 revision |
+| `src/workspace.ts` | 工作区文件：根目录的 `'.'`、扁平命名参数、搜索四字段全必填、路径规整 |
 
 ## 为什么能信
 
-`npm test` 跑十三套断言：
+`npm test` 跑十四套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -78,8 +79,12 @@
 13. **`test/settings.ts`** —— 全局设置：坏命名空间跳过而不清空整页、`expectedRevision`
     必须来自刚读到的那一份、被打码的密钥显示成「已隐藏」而不是「空」、写回时沿用
     回答里的新 revision、**写同值不递增 revision**、冲突文案能直接照着做。
+14. **`test/workspace.ts`** —— 工作区文件：空串与 `'/'` 都被规整成 `'.'`（Host 对这两者
+    分别报 `path is required` 与 `outside-workspace`）、反斜杠与 `..` 之外的多余段被
+    清掉、`search` 的四个字段一个不少、目录排在文件前面、坏条目跳过、越界的文案
+    中文化。
 
-`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做七件事：
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做八件事：
 
 1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
    数学正确，而是「这份代码能跟真正的 Host 说话」。
@@ -103,6 +108,9 @@
    这既验证了 `settings/update` 的请求形状（含 `expectedRevision`），又因为「写同值不
    递增 revision」而不在这台电脑上留下任何改动。随后用一个过期的 revision 确认会被
    拒绝，而不是悄悄覆盖电脑上的值。
+8. 用会话 id 当 `workspaceFileScopeId` 列工作区根（真 Host 上列出 `.git`、`app`、
+   `docs` …），进一层子目录，读 `README.md` 的前 20 行，再搜一次 `pocket`。最后故意
+   传 `'/'` 确认越界被拒 —— 那条断言就是「手机只能看会话拥有的目录」的证据。全程只读。
 
 ## 在鸿蒙工程里怎么用
 
