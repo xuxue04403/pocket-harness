@@ -26,10 +26,12 @@
 | `src/session_rows.ts` | 会话列表的行：主键 `sessionId`、标题在 `projections` 里、运行中优先排序 |
 | `src/transcript.ts` | 会话正文的行：内容块拼接、工具调用、`turn/end` 的异常原因、流式增量 |
 | `src/relay_protocol.ts` | 中继控制消息：首帧 hello、进房回执、`ready`、关闭帧里的拒绝码 |
+| `src/remote_events.ts` | 网关的 `$events` 转发流：ready 握手、取消、把一次 waterfall 变成一条回复 |
+| `src/questions.ts` | 把转发来的 waterfall 说成审批或选择题，并组装 DSH 期望的答案 |
 
 ## 为什么能信
 
-`npm test` 跑八套断言：
+`npm test` 跑九套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -54,6 +56,11 @@
 8. **`test/relay_contract.ts`** —— 起一个**真的中继进程**（`relay/run.mjs`），证明上面
    那些形状不是我自己想出来的：进房回执、双方 `ready`、字节原样穿过、手机离开时
    Host 收到 `peer-gone`、错 token 关闭帧 4403、二进制首帧关闭帧 4400、第二部手机 4409。
+9. **`test/questions.ts`** —— 审批与提问的解析：`displayReason` 优先英文、无理由/无工具名
+   也能读、选项两种形状都收（`{label,description}` 与裸字符串）、无 id 的题目用位置兜底、
+   **渲染不了的返回 null**（调用方据此 delegate，别把 waterfall 挂死）、答案批次的形状、
+   空白自定义答案不出现在载荷里。`test/client.ts` 另有 10 条断言把这条流真的走一遍：
+   进 ready、收到 waterfall、解析成审批、回答落到 Host、delegate 发出 `next`。
 
 `npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做两件事：
 

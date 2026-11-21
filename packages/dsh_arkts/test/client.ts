@@ -24,6 +24,8 @@ import {
 import { decodeHello, encodeHello, verifyHelloProof } from '../src/link_protocol'
 import { LinkClient, LinkRefusedError } from '../src/client'
 import { RpcError } from '../src/rpc'
+import { RemoteEvents } from '../src/remote_events'
+import { APPROVAL_ALLOWED_ONCE, QUESTION_APPROVAL, readQuestion } from '../src/questions'
 import { x25519PublicKey } from '../src/curve25519'
 import type { JsonObject } from '../src/json'
 
@@ -108,6 +110,8 @@ interface HostOptions {
 /** 进程内的 Host：hello → Noise responder → 一个只认几个端点的 RPC 服务。 */
 class FakeHost {
   readonly transport: Pipe
+  /** 手机打到 `$events/result` 的载荷，按到达顺序记下来。 */
+  readonly outcomes: JsonObject[] = []
   private readonly options: HostOptions
   private channel: SecureChannel | null = null
   private hostId: string
@@ -190,10 +194,37 @@ class FakeHost {
       this.send(errorEnvelope(id, 'TEST_FAILURE', 'expected on purpose', { hint: 'ok' }))
       return
     }
+    if (endpoint === '$events/result') {
+      // 网关内部端点：手机答完一条 waterfall 后打这里。真网关对未知 eventId
+      // 也返回成功，所以这里只记录并回 `{accepted:true}`。
+      this.outcomes.push({ ...(inner ?? {}), clientId: inner?.['clientId'] })
+      this.send(responseEnvelope(id, { accepted: true }))
+      return
+    }
     if (endpoint === 'link/stream.open') {
       const name = inner?.endpoint
       const streamId = 7
       this.send(responseEnvelope(id, { streamId }))
+      if (name === '$events') {
+        // 网关的转发事件流：先 ready，再推一条审批 waterfall。
+        this.send(eventEnvelope({
+          streamId,
+          hasValue: true,
+          value: { type: 'ready', clientId: 'client-under-test', host: { home: '/home/test' } },
+        }))
+        this.send(eventEnvelope({
+          streamId,
+          hasValue: true,
+          value: {
+            type: 'waterfall',
+            event: 'approval/request',
+            eventId: 'evt-1',
+            agentId: 'agent-1',
+            request: { toolName: 'bash', reason: 'run a command' },
+          },
+        }))
+        return
+      }
       const frames = name === 'job/list' ? (this.options.jobs ?? []) : []
       for (const frame of frames) {
         this.send(eventEnvelope({ streamId, hasValue: true, value: frame }))
@@ -404,6 +435,42 @@ async function checkRelayRoute(): Promise<void> {
   link.close()
 }
 
+async function checkRemoteEvents(): Promise<void> {
+  // 网关内部端点：`$events` 走流、`$events/result` 走 unary。这两个名字不是
+  // 业务的 `namespace/method`，Host 侧靠 `$` 前缀把它们原样透传。鸿蒙手机上
+  // 审批与提问全靠这条路径，一旦断掉 agent 会永远卡在 waterfall 上。
+  const f = fixture()
+  const link = await LinkClient.connect(connectOptions(f))
+  const events = await RemoteEvents.open(link.rpc, 4000)
+  ok('the event stream reports its client id', events.clientId === 'client-under-test', events.clientId)
+  ok('the event stream reports the host home', events.home === '/home/test', events.home)
+
+  const invocation = await events.nextInvocation()
+  ok('a forwarded waterfall arrives', invocation !== null)
+  ok('the waterfall names the event', invocation?.event === 'approval/request', invocation?.event ?? '')
+  ok('the waterfall carries the request', invocation?.request['toolName'] === 'bash')
+
+  const question = invocation === null ? null : readQuestion(invocation)
+  ok('the waterfall parses into a question', question !== null)
+  ok('the question is an approval', question?.kind === QUESTION_APPROVAL, question?.kind ?? '')
+
+  await events.answer(invocation!, APPROVAL_ALLOWED_ONCE)
+  ok('the answer reaches the Host', f.host.outcomes.length === 1, `saw ${f.host.outcomes.length}`)
+  same('the answer echoes the client and event ids', {
+    clientId: f.host.outcomes[0]?.['clientId'],
+    eventId: f.host.outcomes[0]?.['eventId'],
+  }, { clientId: 'client-under-test', eventId: 'evt-1' })
+  same('the approval outcome is a result', f.host.outcomes[0]?.['outcome'], {
+    kind: 'result',
+    value: APPROVAL_ALLOWED_ONCE,
+  })
+
+  await events.answer(invocation!, null, true)
+  same('delegating sends the next outcome', f.host.outcomes[1]?.['outcome'], { kind: 'next' })
+  await events.close()
+  link.close()
+}
+
 async function checkTicketRoundTrip(): Promise<void> {
   const f = fixture()
   ok('the ticket encodes to a pocketharness url', f.ticketText.startsWith('pocketharness://pair?t='))
@@ -425,6 +492,7 @@ async function main(): Promise<void> {
   await checkStream()
   await checkHelloTimeout()
   await checkRelayRoute()
+  await checkRemoteEvents()
   await checkTicketRoundTrip()
 
   if (failures.length > 0) {

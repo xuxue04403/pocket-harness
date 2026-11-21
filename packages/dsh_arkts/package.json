@@ -6,7 +6,7 @@
   "description": "Pocket Harness 协议核心的 TypeScript 版本：同一份源码供鸿蒙 ArkTS 与 Node 金标测试使用。",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && node build/vectors.mjs && node build/protocol.mjs && node build/framing.mjs && node build/client.mjs && node build/session_rows.mjs && node build/transcript.mjs && node build/relay_protocol.mjs && node build/relay_contract.mjs",
+    "test": "node build.mjs && node build/vectors.mjs && node build/protocol.mjs && node build/framing.mjs && node build/client.mjs && node build/session_rows.mjs && node build/transcript.mjs && node build/relay_protocol.mjs && node build/relay_contract.mjs && node build/questions.mjs",
     "test:live": "node build.mjs && node build/live.mjs && node build/live_transcript.mjs && node build/live_relay.mjs"
   },
   "devDependencies": {

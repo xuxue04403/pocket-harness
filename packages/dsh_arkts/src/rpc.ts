@@ -52,6 +52,32 @@ interface PendingStream {
   cancelled: boolean
 }
 
+/**
+ * 外部结束一条流用的句柄。
+ *
+ * `openStream` 会把它接上自己的唤醒函数，所以调用方只要置 `aborted` 再
+ * `wake()`，生成器就会在下一个循环里正常收尾（含向 Host 关流）。
+ * 之所以不用生成器的 `return()`：生成器可能正停在 `await` 上等调用方，
+ * 那条路径会互相等死。
+ */
+export interface StreamCancel {
+  aborted: boolean
+  wake: () => void
+}
+
+/**
+ * 打开流时的选项。
+ *
+ * 单独声明而不是内联字面量类型：ArkTS 的 `arkts-no-untyped-obj-literals` 要求
+ * 每个对象字面量都对上一个显式声明的 class/interface，内联形状在鸿蒙侧编不过。
+ */
+export interface StreamOptions {
+  readonly timeoutMs?: number
+  readonly openEndpoint?: string
+  readonly closeEndpoint?: string
+  readonly cancel?: StreamCancel
+}
+
 export interface RpcClientOptions {
   readonly channel: SecureChannel
   readonly defaultTimeoutMs?: number
@@ -153,14 +179,19 @@ export class RpcClient {
    *
    * 用异步生成器暴露，调用方 `for await` 即可；内部用单消费者队列缓冲，
    * 因为 Host 在回应 streamId 之后会立刻推帧。
+   *
+   * 想在外部结束一条流就传 [options.cancel]：对它 `aborted = true` 再调
+   * `wake()`。不能用生成器的 `return()` —— 它停在中途的 `await` 上，`return`
+   * 只会排队等那个 `await` 结束，而它等的正是调用方；这条路径会死锁。
    */
   async *openStream(
     endpoint: string,
     args: JsonObject = {},
-    options: { readonly timeoutMs?: number; readonly openEndpoint?: string; readonly closeEndpoint?: string } = {},
+    options: StreamOptions = {},
   ): AsyncGenerator<JsonObject> {
     const openEndpoint = options.openEndpoint ?? DEFAULT_STREAM_OPEN_ENDPOINT
     const closeEndpoint = options.closeEndpoint ?? DEFAULT_STREAM_CLOSE_ENDPOINT
+    const cancel = options.cancel
     const queue: JsonObject[] = []
     let done = false
     let failure: Error | null = null
@@ -191,6 +222,12 @@ export class RpcClient {
       cancelled: false,
     }
 
+    if (cancel !== undefined) {
+      // 一个已经结束的请求不该再打开流；直接让它返回。
+      cancel.wake = () => { record.finish() }
+      if (cancel.aborted) record.finish()
+    }
+
     const id = `s${this.nextCallId++}`
     this.opening.set(id, record)
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs
@@ -203,6 +240,7 @@ export class RpcClient {
 
     try {
       for (;;) {
+        if (cancel !== undefined && cancel.aborted) return
         if (queue.length > 0) {
           yield queue.shift()!
           continue

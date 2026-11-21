@@ -13,9 +13,20 @@ import router from '@ohos.router'
 import type { Context } from '@kit.AbilityKit'
 import { decodeTicket, type PairingTicket } from '../core/pairing'
 import { HostStore } from '../storage.ohos'
-import { openTcpTransport, systemRandom } from '../platform.ohos'
+import { openRelayTransport, openTcpTransport, systemRandom } from '../platform.ohos'
 import { LinkClient, LinkRefusedError } from '../core/client'
 import { stringField, type JsonObject } from '../core/json'
+import type { StreamCancel, StreamOptions } from '../core/rpc'
+import { RemoteEvents, type RemoteInvocation } from '../core/remote_events'
+import {
+  APPROVAL_ALLOWED_ONCE,
+  APPROVAL_REJECTED,
+  QUESTION_APPROVAL,
+  answerValue,
+  readQuestion,
+  type PendingQuestion,
+  type QuestionOption,
+} from '../core/questions'
 import {
   mergeTranscriptRow,
   readStreamDelta,
@@ -79,14 +90,19 @@ struct Chat {
   @State loading: boolean = true
   @State input: string = ''
   @State sending: boolean = false
+  @State questions: PendingQuestion[] = []
+  @State questionsReady: boolean = false
+  @State questionIndex: number = 0
   private link: LinkClient | null = null
   private stream: FollowStream | null = null
+  private followCancel: StreamCancel | null = null
+  private events: RemoteEvents | null = null
   private draft: Draft | null = null
   /** 解析后的行；@State rows 是它的渲染视图，两者必须一起更新。 */
   private parsedRows: TranscriptRow[] = []
   private ticketText: string = ''
   private sessionId: string = ''
-  private title: string = '会话'
+  private title: string = ''
 
   aboutToAppear(): void {
     const params = router.getParams() as ChatParams
@@ -98,6 +114,9 @@ struct Chat {
 
   aboutToDisappear(): void {
     this.stopStream()
+    const events = this.events
+    this.events = null
+    if (events !== null) events.close()
     this.link?.close()
     this.link = null
   }
@@ -105,9 +124,17 @@ struct Chat {
   private stopStream(): void {
     const stream = this.stream
     this.stream = null
+    const cancel = this.followCancel
+    this.followCancel = null
+    if (cancel !== null) {
+      // 必须走 `StreamCancel`：生成器可能正停在 `await` 上等这一侧，
+      // `stream.return()` 只会排队等它，双方互等即死锁。
+      cancel.aborted = true
+      cancel.wake()
+    }
     if (stream !== null) {
-      // 取消生成器即取消订阅；Host 侧看到流关闭会停止推送。
-      stream.return().catch(() => {})
+      // 兜底：取消句柄已经让它自己收尾，这里只丢掉引用。
+      stream.return(undefined).catch(() => {})
     }
   }
 
@@ -124,18 +151,107 @@ struct Chat {
         identity: identity,
         random: systemRandom,
         openTransport: openTcpTransport,
+        openRelay: openRelayTransport,
         timeoutMs: 15000,
         heartbeat: true,
       })
       this.link = link
       this.watch(link)
+      this.listenForQuestions(link)
     } catch (error) {
       this.error = describeError(error as Object)
       this.loading = false
     }
   }
 
+  /**
+   * 订阅网关的转发事件流，于是审批与提问会出现在手机上。
+   *
+   * 拿不到这条流不该拖垮会话：读消息照常，问人的事留在电脑窗口。
+   */
+  private listenForQuestions(link: LinkClient): void {
+    this.questionsReady = false
+    RemoteEvents.open(link.rpc, 15000).then((events: RemoteEvents) => {
+      this.events = events
+      this.questionsReady = true
+      this.drainQuestions(events)
+    }).catch(() => {
+      // 旧版 Harness 没有这个端点，或电脑上已经有窗口抢着回答。
+      this.questionsReady = false
+    })
+  }
+
+  private async drainQuestions(events: RemoteEvents): Promise<void> {
+    for (;;) {
+      let invocation: RemoteInvocation | null = null
+      try {
+        invocation = await events.nextInvocation()
+      } catch {
+        return
+      }
+      if (invocation === null || this.events !== events) return
+      const question = readQuestion(invocation)
+      if (question === null) {
+        // 渲染不了就交回电脑：丢掉它会让那个 waterfall 永远挂住，整个 turn 卡死。
+        events.answer(invocation, null, true).catch(() => {})
+        continue
+      }
+      if (events.isCancelled(invocation)) continue
+      this.questions = this.questions.concat([question])
+      this.questionIndex = 0
+    }
+  }
+
+  private answerApproval(allowed: boolean): Promise<void> {
+    const question = this.currentQuestion()
+    const events = this.events
+    if (question === null || events === null) return Promise.resolve()
+    this.dropCurrentQuestion()
+    return events.answer(question.invocation, allowed ? APPROVAL_ALLOWED_ONCE : APPROVAL_REJECTED).then(() => {}).catch((error: Object) => {
+      this.error = describeError(error)
+    })
+  }
+
+  private answerWithSelections(selected: string[]): Promise<void> {
+    const question = this.currentQuestion()
+    const events = this.events
+    if (question === null || events === null) return Promise.resolve()
+    const selections = new Map<string, string[]>()
+    for (const choice of question.questions) {
+      // 单题按选中的标签；多题界面上一次只答第一题，其余留空由 Host 追问。
+      selections.set(choice.id, question.questions.length === 1 ? selected : [])
+    }
+    const value = answerValue(question.questions, selections, new Map<string, string>())
+    this.dropCurrentQuestion()
+    return events.answer(question.invocation, value).then(() => {}).catch((error: Object) => {
+      this.error = describeError(error)
+    })
+  }
+
+  private delegateQuestion(): Promise<void> {
+    const question = this.currentQuestion()
+    const events = this.events
+    if (question === null || events === null) return Promise.resolve()
+    this.dropCurrentQuestion()
+    return events.answer(question.invocation, null, true).then(() => {}).catch((error: Object) => {
+      this.error = describeError(error)
+    })
+  }
+
+  private currentQuestion(): PendingQuestion | null {
+    if (this.questions.length === 0) return null
+    return this.questions[0]
+  }
+
+  private dropCurrentQuestion(): void {
+    if (this.questions.length === 0) return
+    this.questions = this.questions.slice(1)
+    this.questionIndex = 0
+  }
+
   private watch(link: LinkClient): void {
+    const cancel: StreamCancel = { aborted: false, wake: () => undefined }
+    const options: StreamOptions = { timeoutMs: 30000, cancel: cancel }
     const stream: FollowStream = link.openStream('session/follow', {
       request: {
         address: { kind: 'session', sessionId: this.sessionId },
@@ -143,8 +259,9 @@ struct Chat {
         activate: true,
         assistantStream: true,
       },
-    }, 30000)
+    }, options)
     this.stream = stream
+    this.followCancel = cancel
     this.pump(stream)
   }
 
@@ -264,6 +381,73 @@ struct Chat {
   }
 
   @Builder
+  private questionBar(question: PendingQuestion) {
+    Column({ space: 8 }) {
+      Row({ space: 6 }) {
+        Text(question.kind === QUESTION_APPROVAL ? '需要你确认' : '等待回答')
+          .fontSize(11)
+          .fontColor('#B26A00')
+        if (this.questions.length > 1) {
+          Text(`还有 ${this.questions.length - 1} 个在排队`)
+            .fontSize(11)
+            .fontColor('#888888')
+        }
+      }
+      Text(question.title)
+        .fontSize(14)
+        .fontColor('#1A1A1A')
+        .maxLines(4)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (question.kind === QUESTION_APPROVAL) {
+        Row({ space: 8 }) {
+          Button('允许一次')
+            .fontSize(13)
+            .height(34)
+            .onClick(() => { this.answerApproval(true) })
+          Button('拒绝')
+            .fontSize(13)
+            .height(34)
+            .backgroundColor('#EEEEEE')
+            .fontColor('#1A1A1A')
+            .onClick(() => { this.answerApproval(false) })
+          Button('回电脑上处理')
+            .fontSize(13)
+            .height(34)
+            .backgroundColor('#EEEEEE')
+            .fontColor('#1A1A1A')
+            .onClick(() => { this.delegateQuestion() })
+        }
+      } else {
+        Column({ space: 6 }) {
+          ForEach(question.questions[0].options, (option: QuestionOption) => {
+            Button(option.label)
+              .fontSize(13)
+              .height(34)
+              .width('100%')
+              .backgroundColor('#EEEEEE')
+              .fontColor('#1A1A1A')
+              .onClick(() => { this.answerWithSelections([option.label]) })
+          }, (option: QuestionOption) => option.label)
+        }
+        .width('100%')
+        Button('回电脑上处理')
+          .fontSize(13)
+          .height(34)
+          .backgroundColor('#EEEEEE')
+          .fontColor('#1A1A1A')
+          .onClick(() => { this.delegateQuestion() })
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .padding(12)
+    .margin({ left: 12, right: 12, bottom: 8 })
+    .width('92%')
+    .borderRadius(10)
+    .backgroundColor('#FFF6E5')
+  }
+
+  @Builder
   private transcriptRow(view: RowView) {
     Column({ space: 4 }) {
       Text(view.title)
@@ -329,6 +513,10 @@ struct Chat {
       .layoutWeight(1)
       .width('100%')
       .divider({ strokeWidth: 1, color: '#EEEEEE' })
+
+      if (this.questions.length > 0) {
+        this.questionBar(this.questions[0])
+      }
 
       if (this.error.length > 0) {
         Text(this.error)

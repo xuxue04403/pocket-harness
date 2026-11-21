@@ -9,7 +9,7 @@ import { newDeviceId, type RandomSource } from './identity'
 import { encodeProof, LINK_HELLO_VERSION, encodeHello } from './link_protocol'
 import { createNoisePrologue, NoiseIkSession } from './noise'
 import { decodeTicket, hasRelay, parseEndpoint, type DeviceIdentity, type PairingTicket } from './pairing'
-import { RpcClient } from './rpc'
+import { RpcClient, type StreamOptions } from './rpc'
 import { SecureChannel, type FrameTransport } from './secure_channel'
 import { FRAME_KIND, decodeFrame, encodeFrame } from './wire'
 import type { JsonObject } from './json'
@@ -259,8 +259,12 @@ export class LinkClient {
   }
 
   /** 打开一条流式端点；宿主在回应 streamId 之后会马上推帧。 */
-  openStream(endpoint: string, args: JsonObject = {}, timeoutMs?: number): AsyncGenerator<JsonObject> {
-    return this.rpc.openStream(endpoint, args, timeoutMs === undefined ? {} : { timeoutMs })
+  openStream(
+    endpoint: string,
+    args: JsonObject = {},
+    options: StreamOptions = {},
+  ): AsyncGenerator<JsonObject> {
+    return this.rpc.openStream(endpoint, args, options)
   }
 
   close(): void {

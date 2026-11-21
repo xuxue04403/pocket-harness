@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（452 KB，内含 `ets/modules.abc` 245,748 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（521 KB，内含 `ets/modules.abc` 282,480 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -165,9 +165,27 @@ tar.exe -tf entry\build\default\outputs\default\entry-default-unsigned.hap
 与 `test/relay_contract.ts`（起真中继进程）钉住，`npm run test:live` 里还有一条
 `live_relay` 走完真实 Host 插件 + 真实中继的完整链路。
 
+### 审批与提问也能在手机上答
+
+鸿蒙侧订阅了网关的 `$events` 转发流（`platform.ohos.ts` 之外的 `src/remote_events.ts`），
+所以 agent 请求工具权限或问选择题时，对话页底部会出现一条「需要你确认」的卡片，
+三个按钮分别是允许一次、拒绝、回电脑上处理。
+
+两个必须知道的细节：
+
+- **渲染不了的一定要 delegate**：`readQuestion` 对不认识的 waterfall 返回 `null`，
+  这时必须发 `{kind:'next'}` 把它交回电脑。悄悄丢掉它会让那个 waterfall 永远挂着，
+  整个 turn 卡在「深度求索中」不动；
+- **关闭流不能用生成器的 `return()`**：生成器可能正停在 `await` 上等调用方，
+  `return()` 只会排队等它，双方互等就是死锁（真机表现是「点返回后界面不退」）。
+  `StreamOptions.cancel` 就是为了这条路加的：置 `aborted` 再 `wake()`，
+  生成器会在下一个循环里自己收尾并向 Host 关流。
+
+这两条各有一处断言：`test/questions.ts` 钉住解析与 delegate 的选择，
+`test/client.ts` 钉住「回答真的落到 Host、delegate 真的发出 `next`」。
+
 ## 二期路线建议
 
-1. 先在一台 Apple Silicon Mac 上把 HAP 打出来并旁加载，确认 `dart:io` 的 TCP 与 WebSocket 在真机上可用。
+1. 把这份 HAP 旁加载到真机，确认 `@ohos.net.socket` 与 `@ohos.net.webSocket` 在真机上能连（模拟器与真机的网络栈不同）。
 2. 相机扫码如受阻，先只保留"粘贴配对码"入口。
 3. 把设备私钥迁到 Asset Store Kit。
-4. 若要在鸿蒙应用市场上架，需要走 HarmonyOS 分支用 Command Line Tools 重新打包（`compileSdkType` 必须是 HarmonyOS 而非 OpenHarmony）。
