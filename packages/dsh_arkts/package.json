@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node build.mjs && node build/vectors.mjs && node build/protocol.mjs && node build/framing.mjs && node build/client.mjs && node build/session_rows.mjs && node build/transcript.mjs",
-    "test:live": "node build.mjs && node build/live.mjs"
+    "test:live": "node build.mjs && node build/live.mjs && node build/live_transcript.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

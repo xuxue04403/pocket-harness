@@ -48,9 +48,13 @@
    数组、工具参数是未解析的字符串、`turn/end` 只有 `completed`/`aborted` 安静、
    `tool-call-delta` 故意丢弃、snapshot 的 `records` 能被取出。
 
-`npm run test:live` 更进一步：它连上**运行中的** DeepSeek Harness，跑完整 hello →
-Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是数学正确，而是
-「这份代码能跟真正的 Host 说话」。
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做两件事：
+
+1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
+   数学正确，而是「这份代码能跟真正的 Host 说话」。
+2. 用 `session/page` 把真实会话记录拉下来喂给 `readTranscript`，统计产出的行数
+   （实测 24 个会话：用户 84 行、助手 48 行、工具 117 行）。单元测试证明解析器自洽，
+   这一步证明「我以为的形状」和「Host 实际发的形状」是一回事。
 
 ## 在鸿蒙工程里怎么用
 
