@@ -153,6 +153,32 @@ export function readTranscript(records: Object[]): TranscriptRow[] {
   return rows
 }
 
+/**
+ * 把一行并进已有的列表。
+ *
+ * 两件事必须做对：
+ * - **同一个 `seq` 要替换而不是追加**：DSH 会用一个新事件修订同一条消息
+ *   （`surfaceOp: 'replace'`），追加会看到同一个序号出现两次；
+ * - 并按 `seq` 重新排序：实时事件与补页来的记录是乱序到达的。
+ *
+ * 返回新数组而不是原地改，因为 ArkUI 的 `@State` 只在赋值时重新渲染。
+ */
+export function mergeTranscriptRow(rows: TranscriptRow[], row: TranscriptRow): TranscriptRow[] {
+  const next: TranscriptRow[] = []
+  let replaced = false
+  for (const existing of rows) {
+    if (existing.seq === row.seq) {
+      next.push(row)
+      replaced = true
+      continue
+    }
+    next.push(existing)
+  }
+  if (!replaced) next.push(row)
+  next.sort((left: TranscriptRow, right: TranscriptRow): number => left.seq - right.seq)
+  return next
+}
+
 /** 从 `session/follow` 的 snapshot 帧里取记录数组（没有就是空）。 */
 export function recordsOfSnapshot(snapshot: JsonObject): Object[] {
   return arrayField(snapshot, 'records')

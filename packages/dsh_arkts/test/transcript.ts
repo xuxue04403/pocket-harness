@@ -6,6 +6,7 @@
 
 import {
   countImages,
+  mergeTranscriptRow,
   readStreamDelta,
   readTranscript,
   readTranscriptRow,
@@ -141,6 +142,28 @@ function checkBatch(): void {
   ok('a snapshot without records is empty', recordsOfSnapshot({ type: 'snapshot' }).length === 0)
 }
 
+function checkMerge(): void {
+  const first: TranscriptRow = { seq: 5, kind: ROW_USER, text: 'first', reasoning: '', name: '', arguments: '', isError: false, injected: false }
+  const later: TranscriptRow = { seq: 9, kind: ROW_USER, text: 'later', reasoning: '', name: '', arguments: '', isError: false, injected: false }
+  const merged = mergeTranscriptRow([later], first)
+  same(
+    'a new row slots in by sequence, not by arrival',
+    merged.map((r: TranscriptRow): string => r.text),
+    ['first', 'later'],
+  )
+
+  // 同一个 seq 带新内容再来一次：必须替换，否则一条消息显示两遍。
+  const revised: TranscriptRow = { seq: 5, kind: ROW_USER, text: 'first, edited', reasoning: '', name: '', arguments: '', isError: false, injected: false }
+  const again = mergeTranscriptRow(merged, revised)
+  same(
+    'the same sequence replaces instead of duplicating',
+    again.map((r: TranscriptRow): string => r.text),
+    ['first, edited', 'later'],
+  )
+
+  same('the input array is left alone', merged.map((r: TranscriptRow): string => r.text), ['first', 'later'])
+}
+
 function checkStreaming(): void {
   const text = readStreamDelta({
     type: 'assistant-stream',
@@ -182,6 +205,7 @@ function main(): void {
   checkTools()
   checkTurnEnd()
   checkBatch()
+  checkMerge()
   checkStreaming()
   checkHelpers()
   if (failures.length > 0) {

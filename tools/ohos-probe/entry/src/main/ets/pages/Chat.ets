@@ -17,6 +17,7 @@ import { openTcpTransport, systemRandom } from '../platform.ohos'
 import { LinkClient, LinkRefusedError } from '../core/client'
 import { stringField, type JsonObject } from '../core/json'
 import {
+  mergeTranscriptRow,
   readStreamDelta,
   readTranscript,
   readTranscriptRow,
@@ -81,6 +82,8 @@ struct Chat {
   private link: LinkClient | null = null
   private stream: FollowStream | null = null
   private draft: Draft | null = null
+  /** 解析后的行；@State rows 是它的渲染视图，两者必须一起更新。 */
+  private parsedRows: TranscriptRow[] = []
   private ticketText: string = ''
   private sessionId: string = ''
   private title: string = '会话'
@@ -167,6 +170,7 @@ struct Chat {
     const type = stringField(frame, 'type', '')
     if (type === 'snapshot') {
       const rows = readTranscript(recordsOfSnapshot(frame))
+      this.parsedRows = rows
       this.rows = rows.map((row: TranscriptRow): RowView => this.view(row))
       this.draft = null
       this.draftText = ''
@@ -193,28 +197,14 @@ struct Chat {
     if (delta !== null) this.applyDelta(delta)
   }
 
+  /**
+   * 把一帧事件并进列表。
+   *
+   * 去重与排序在核心的 `mergeTranscriptRow` 里做（那里有断言）：同一个 `seq`
+   * 会带新内容再来一次，直接 push 会让一条消息显示两遍。
+   */
   private merge(row: TranscriptRow): void {
-    const view = this.view(row)
-    const next: RowView[] = []
-    let placed = false
-    for (const existing of this.rows) {
-      if (existing.key === view.key) {
-        next.push(view)
-        placed = true
-        continue
-      }
-      next.push(existing)
-    }
-    if (!placed) next.push(view)
-    next.sort((left: RowView, right: RowView): number => this.seqOf(left.key) - this.seqOf(right.key))
-    this.rows = next
-  }
-
-  private seqOf(key: string): number {
-    const index = key.indexOf('#')
-    if (index < 0) return 0
-    const parsed = Number.parseInt(key.substring(index + 1), 10)
-    return Number.isNaN(parsed) ? 0 : parsed
+    this.rows = mergeTranscriptRow(this.parsedRows, row).map((item: TranscriptRow): RowView => this.view(item))
   }
 
   private view(row: TranscriptRow): RowView {
