@@ -71,3 +71,11 @@ probe/_tscheck/
 tools/ohos-probe/entry/src/main/ets/core/
 tools/ohos-probe/*.ts
 !tools/ohos-probe/hvigorfile.ts
+
+# 发布签名：私钥与口令都不入库（见 app/android/key.properties.example）
+app/android/key.properties
+*.jks
+*.keystore
+app/android/build/
+app/android/app/*.jks
+app/android/*.jks

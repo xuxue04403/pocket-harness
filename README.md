@@ -84,6 +84,11 @@ flutter build apk --release --split-per-abi
 
 三份按 CPU 架构拆开的包：`app-arm64-v8a-release.apk`（约 24 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（约 20 MB，老设备）、`app-x86_64-release.apk`（约 26 MB，模拟器）。不拆包的单包约 35 MB。
 
+> 发布签名从 `app/android/key.properties` 读（模板见 `app/android/key.properties.example`）。
+> 这两个文件与 keystore 都在 `.gitignore` 里：开源仓库不该带能签出「官方包」的私钥。
+> 没有 `key.properties` 时回落到 debug 签名，只为让 `flutter run --release` 能跑，不能分发。
+> 实测过的两条分支：无 key.properties → 构建成功（66.1 MB 单包）；有 key.properties + 自建
+> keystore → `apksigner verify --print-certs` 显示的是 keystore 里的 DN，证明真走了 release 签名。
 > 当前 release 沿用 debug 签名（`android/app/build.gradle.kts` 里 `signingConfig = signingConfigs.getByName("debug")`），只适合自用与测试；要发布到应用商店请换成自己的 keystore。
 
 ### 3. 配对
