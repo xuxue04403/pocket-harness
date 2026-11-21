@@ -33,10 +33,11 @@
 | `src/skills.ts` | 会话可用的技能清单与 `/name` 插入文本 |
 | `src/settings.ts` | 电脑的全局设置：revision 校验、打码密钥、写回后的新 revision |
 | `src/workspace.ts` | 工作区文件：根目录的 `'.'`、扁平命名参数、搜索四字段全必填、路径规整 |
+| `src/composer.ts` | 发出去的内容块：标准 base64（不是 url 变体）、类型白名单、空 content 必须拦住 |
 
 ## 为什么能信
 
-`npm test` 跑十四套断言：
+`npm test` 跑十五套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -84,7 +85,7 @@
     清掉、`search` 的四个字段一个不少、目录排在文件前面、坏条目跳过、越界的文案
     中文化。
 
-`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做八件事：
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做九件事：
 
 1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
    数学正确，而是「这份代码能跟真正的 Host 说话」。
@@ -111,6 +112,11 @@
 8. 用会话 id 当 `workspaceFileScopeId` 列工作区根（真 Host 上列出 `.git`、`app`、
    `docs` …），进一层子目录，读 `README.md` 的前 20 行，再搜一次 `pocket`。最后故意
    传 `'/'` 确认越界被拒 —— 那条断言就是「手机只能看会话拥有的目录」的证据。全程只读。
+9. 用 `probe/samples/tiny.png` 建一个**空会话**，发一条带图片的 prompt，然后按
+   `session/page` 轮询等 `user/message` 出现：确认文字还在、Host 存下来的是一个
+   图片引用（不是字节）、用 `session/attachment` 取回的 base64 与发出去的完全一致。
+   这一步证明的正是「手机上选一张图，电脑真的能看见」。测试会话会留在电脑上，是
+   这条链路唯一会留下痕迹的地方。
 
 ## 在鸿蒙工程里怎么用
 

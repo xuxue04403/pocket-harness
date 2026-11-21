@@ -57,6 +57,16 @@ import {
   type StreamDelta,
   type TranscriptRow,
 } from '../core/transcript'
+import {
+  buildContent,
+  describePromptError,
+  hasContent,
+  promptRequest,
+  PROMPT_MODE_QUEUE,
+  PROMPT_MODE_STEER,
+  type OutgoingImage,
+} from '../core/composer'
+import { pickOneImage } from '../images.ohos'
 
 // AsyncGenerator 的三个类型参数必须都给：ArkTS 不接受它们的 ny 默认值。
 type FollowStream = AsyncGenerator<JsonObject, void, undefined>
@@ -121,6 +131,9 @@ struct Chat {
   @State skills: SkillEntry[] = []
   @State skillPanel: boolean = false
   @State skillQuery: string = ''
+  /** 已选好、还没发出去的图片。 */
+  @State pendingImages: OutgoingImage[] = []
+  @State picking: boolean = false
   private link: LinkClient | null = null
   private stream: FollowStream | null = null
   private followCancel: StreamCancel | null = null
@@ -467,26 +480,49 @@ struct Chat {
   }
 
   private async send(mode: string): Promise<void> {
-    const text = this.input.trim()
-    if (text.length === 0 || this.sending) return
+    if (this.sending) return
+    if (!hasContent(this.input, this.pendingImages)) return
     const link = this.link
     if (link === null) return
     this.sending = true
     this.error = ''
     try {
-      await link.rpc.call('session/prompt', {
-        request: {
-          requestId: `phone-${Date.now()}`,
-          sessionId: this.sessionId,
-          mode: mode,
-          content: [{ type: 'text', text: text }],
-        },
-      }, 20000)
+      const content = buildContent(this.input, this.pendingImages)
+      const request = promptRequest(`phone-${Date.now()}`, this.sessionId, content, mode)
+      await link.rpc.call('session/prompt', { request }, 20000)
       this.input = ''
+      this.pendingImages = []
     } catch (error) {
-      this.error = describeError(error as Object)
+      this.error = describePromptError(error as Object)
     }
     this.sending = false
+  }
+
+  /** 弹系统相册选一张图，放进待发区。取消不算错误。 */
+  private async pickImage(): Promise<void> {
+    if (this.picking) return
+    this.picking = true
+    this.error = ''
+    try {
+      const picked = await pickOneImage()
+      if (picked.cancelled) return
+      if (picked.image === null) {
+        this.error = picked.problem
+        return
+      }
+      this.pendingImages = this.pendingImages.concat([picked.image])
+    } catch (error) {
+      this.error = `选图失败：${error}`
+    }
+    this.picking = false
+  }
+
+  private removeImage(index: number): void {
+    const kept: OutgoingImage[] = []
+    for (let i = 0; i < this.pendingImages.length; i++) {
+      if (i !== index) kept.push(this.pendingImages[i])
+    }
+    this.pendingImages = kept
   }
 
   @Builder
@@ -708,6 +744,34 @@ struct Chat {
     .width('100%')
   }
 
+  @Builder
+  private pendingImagesBar() {
+    Row({ space: 6 }) {
+      Text(`已选 ${this.pendingImages.length} 张图片`)
+        .fontSize(11)
+        .fontColor('#666666')
+      ForEach(this.pendingImages, (image: OutgoingImage, index: number) => {
+        Row({ space: 4 }) {
+          Text(image.name.length > 0 ? image.name : image.mediaType)
+            .fontSize(10)
+            .fontColor('#0A7A4F')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 120 })
+          Text('移除')
+            .fontSize(10)
+            .fontColor('#B3261E')
+            .onClick(() => { this.removeImage(index) })
+        }
+        .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+        .backgroundColor('#E8F3EE')
+        .borderRadius(10)
+      }, (image: OutgoingImage, index: number) => `${index}-${image.name}`)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, bottom: 4 })
+  }
+
   build() {
     Column() {
       Row() {
@@ -815,17 +879,26 @@ struct Chat {
           .width('100%')
       }
 
+      if (this.pendingImages.length > 0) {
+        this.pendingImagesBar()
+      }
+
       Row({ space: 8 }) {
         TextInput({ text: this.input, placeholder: '给电脑上的智能体发消息' })
           .layoutWeight(1)
           .onChange((value: string) => { this.input = value })
+        Button(this.picking ? '…' : '图片')
+          .backgroundColor('#EEEEEE')
+          .fontColor('#1A1A1A')
+          .enabled(!this.picking)
+          .onClick(() => { this.pickImage() })
         Button(this.sending ? '发送中' : '发送')
           .enabled(!this.sending)
-          .onClick(() => { this.send('queue') })
+          .onClick(() => { this.send(PROMPT_MODE_QUEUE) })
         Button('插入')
           .backgroundColor('#EEEEEE')
           .fontColor('#1A1A1A')
-          .onClick(() => { this.send('steer') })
+          .onClick(() => { this.send(PROMPT_MODE_STEER) })
       }
       .padding({ left: 12, right: 12, top: 8, bottom: 12 })
       .width('100%')

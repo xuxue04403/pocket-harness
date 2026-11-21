@@ -143,6 +143,29 @@ export function encodeBase64Url(bytes: Uint8Array): string {
   return out
 }
 
+/** 标准 base64 的字母表：`+/` 而不是 `-_`。图片数据块用这个口径。 */
+const BASE64_STANDARD = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+/**
+ * 标准 base64 编码，**带 `=` 填充**。
+ *
+ * 图片内容块的 `data` 是标准 base64，不是 base64url：用 base64url 发过去，
+ * Host 解出来是错的字节，而报错文本只会说图片读不出来。
+ */
+export function encodeBase64(bytes: Uint8Array): string {
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i]
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0
+    out += BASE64_STANDARD[b0 >> 2]
+    out += BASE64_STANDARD[((b0 & 0x03) << 4) | (b1 >> 4)]
+    out += i + 1 < bytes.length ? BASE64_STANDARD[((b1 & 0x0f) << 2) | (b2 >> 6)] : '='
+    out += i + 2 < bytes.length ? BASE64_STANDARD[b2 & 0x3f] : '='
+  }
+  return out
+}
+
 export function decodeBase64Url(text: string): Uint8Array {
   const clean = text.replace(/=+$/, '')
   const out = new Uint8Array(Math.floor((clean.length * 3) / 4))

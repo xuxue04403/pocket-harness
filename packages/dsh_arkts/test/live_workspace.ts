@@ -45,7 +45,12 @@ async function main(): Promise<void> {
     if (sessions.length === 0) throw new Error('no session to scope the workspace')
 
     // 挑一个有目录的会话，且目录里真的有东西：新会话的 cwd 可能是空的。
-    const session = sessions[0]
+    //
+    // 优先挑工作区就是这个仓库的那个会话 —— `session/list` 的第一条是最近用过的
+    // 会话，它可能指向 `~/.dsh/profiles/desktop` 之类的目录，在那里搜 "pocket"
+    // 什么也搜不到，于是这条断言会因为「挑错了目录」而红，掩盖真正的问题。
+    const preferred = sessions.find((row) => row.detail.toLowerCase().includes('dsh-bot'))
+    const session = preferred ?? sessions[0]
     console.log(`  scope: ${session.sessionId} (${session.detail})`)
 
     const listing = readListing(await link.rpc.call(
