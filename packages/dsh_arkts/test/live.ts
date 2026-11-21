@@ -16,6 +16,7 @@ import { decodeBase64Url } from '../src/bytes'
 import { identityFromPrivateKey } from '../src/identity'
 import { decodeTicket } from '../src/pairing'
 import { LinkClient } from '../src/client'
+import { FrameSplitter, frameWithLength } from '../src/framing'
 import type { FrameTransport } from '../src/secure_channel'
 import type { JsonObject } from '../src/json'
 
@@ -23,7 +24,8 @@ import type { JsonObject } from '../src/json'
 function openTcp(host: string, port: number, timeoutMs: number): Promise<FrameTransport> {
   return new Promise((resolve, reject) => {
     const socket = connect({ host, port })
-    let buffer = Buffer.alloc(0)
+    // 用与鸿蒙侧同一份切帧实现：这里手搓一份的话，测的就不是真正跑的那段代码。
+    const splitter = new FrameSplitter()
     let frameHandler: (frame: Uint8Array) => void = () => undefined
     let closeHandler: () => void = () => undefined
     let closed = false
@@ -32,15 +34,14 @@ function openTcp(host: string, port: number, timeoutMs: number): Promise<FrameTr
     socket.setTimeout(timeoutMs, () => socket.destroy(new Error('the socket went quiet')))
 
     socket.on('data', (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk])
-      for (;;) {
-        if (buffer.length < 4) return
-        const length = buffer.readUInt32BE(0)
-        if (buffer.length < 4 + length) return
-        const payload = new Uint8Array(buffer.subarray(4, 4 + length))
-        buffer = buffer.subarray(4 + length)
-        frameHandler(payload)
+      let frames: Uint8Array[] = []
+      try {
+        frames = splitter.push(new Uint8Array(chunk))
+      } catch (error) {
+        socket.destroy(error instanceof Error ? error : new Error(String(error)))
+        return
       }
+      for (const frame of frames) frameHandler(frame)
     })
     socket.on('close', () => {
       if (closed) return
@@ -54,9 +55,7 @@ function openTcp(host: string, port: number, timeoutMs: number): Promise<FrameTr
       socket.setTimeout(0)
       resolve({
         send(frame) {
-          const header = Buffer.alloc(4)
-          header.writeUInt32BE(frame.length, 0)
-          socket.write(Buffer.concat([header, Buffer.from(frame)]))
+          socket.write(Buffer.from(frameWithLength(frame)))
         },
         close() {
           socket.destroy()

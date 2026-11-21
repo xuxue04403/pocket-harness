@@ -15,6 +15,7 @@
 | `src/chacha20_poly1305.ts` | RFC 8439 AEAD |
 | `src/noise.ts` | Noise IK 双角色握手与传输密钥 |
 | `src/wire.ts` | 帧、DSHF 分片、JSON 信封 |
+| `src/framing.ts` | TCP 上的长度前缀切帧（两端共用，边界都有断言） |
 | `src/json.ts` | `JsonObject` 与收口用的取值函数（ArkTS 禁 `unknown`） |
 | `src/rpc.ts` | 请求/响应关联与流式端点 |
 | `src/pairing.ts` | 配对票据、端点解析 |
@@ -25,7 +26,7 @@
 
 ## 为什么能信
 
-`npm test` 跑三套断言：
+`npm test` 跑四套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -36,6 +37,8 @@
 3. **`test/client.ts`** —— 在进程内扮演一台 Host（同一条内存管道两端），跑完整的
    `LinkClient.connect`：局域网路由、加密往返、错误配对被拒、冒充 Host id 被拒、
    错误码与 details 透传、流式帧、hello 超时、**只有中继坐标的票据走中继**。
+4. **`test/framing.ts`** —— TCP 长度前缀的边界：两条帧粘一块、一帧拆三段、逐字节喂、
+   超限长度前缀被拒且之后永久失败、空帧、大端字节序。
 
 `npm run test:live` 更进一步：它连上**运行中的** DeepSeek Harness，跑完整 hello →
 Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是数学正确，而是
@@ -50,18 +53,32 @@ Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
 这是第一次接进去才发现 `hasRelay` 那个 bug 的原因）。产物 `.abc` 里能搜到
 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof` 等符号。
 
-需要替换的只有两处：
+需要替换的只有两处，探针工程里都已经写好并编译过：
 
-- **随机数**：`RandomSource` 由调用方注入，鸿蒙侧用 `cryptoFramework.createRandom()`。
-- **传输**：`FrameTransport` 是一个四方法的接口，鸿蒙侧用 `@ohos.net.socket` 的 TCP
-  或 `@ohos.net.webSocket` 实现，字节口径与 Node 侧 `test/live.ts` 的 `openTcp` 相同
-  （TCP 上是 `[uint32 大端长度][帧]`）。
+- **随机数**：`RandomSource` 由调用方注入。鸿蒙侧见
+  `tools/ohos-probe/entry/src/main/ets/platform.ohos.ts` 的 `systemRandom`，用
+  `cryptoFramework.createRandom().generateRandomSync(n)`。
+- **传输**：`FrameTransport` 是一个四方法接口。同一个文件里的 `openTcpTransport` 用
+  `@ohos.net.socket` 的 `constructTCPSocketInstance`，线上口径与 Dart 的
+  `FramedSocket`、Node 的 `test/live.ts` 一致：`[uint32 大端长度][帧]`。
+
+切帧逻辑抽在 `src/framing.ts`（`FrameSplitter`/`frameWithLength`），因为它是两端共用
+且最容易在边界上出错的部分 —— Node 的 live 测试与鸿蒙的传输用的是**同一份**代码，
+所以「framing 自检通过」对两边同时成立。中继侧走 `@ohos.net.webSocket`，二进制
+消息即整帧、没有长度前缀。
 
 ### ArkTS 的两个硬约束（写码时必须绕开）
 
 1. **没有 `TextEncoder`/`TextDecoder`** —— 用 `bytes.ts` 的 `utf8`/`fromUtf8`。
 2. **禁 `unknown`/隐式 any**（`arkts-no-any-unknown`）—— 一律用 `json.ts` 的
    `JsonObject`，不要写 `Record<string, unknown>` 或 `let parsed: unknown`。
+
+### 平台代码为什么不在 `src/` 里
+
+`platform.ohos.ts` 依赖 `@ohos.net.socket` 与 `@kit.CryptoArchitectureKit`，
+Node 的 esbuild 解析不了，所以它放在探针工程里而不是 `src/`。代价是它只被 ArkTS
+编译器检查、没有 Node 单测；补偿是它里面几乎没有逻辑 —— 真正的字节处理都在
+`framing.ts`，那部分有 15 条断言。
 
 ## 与 Dart 版本的关系
 

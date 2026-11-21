@@ -9,7 +9,7 @@ import { encodeBase64Url, fromUtf8, utf8 } from '../core/bytes'
 import { x25519PublicKey } from '../core/curve25519'
 import { NoiseIkSession, createNoisePrologue } from '../core/noise'
 import { decodeTicket, encodeTicket } from '../core/pairing'
-import { ClientCheckResult, runClientCheck } from '../selfcheck'
+import { ClientCheckResult, runClientCheck, runPlatformCheck } from '../selfcheck'
 
 function hex(bytes: Uint8Array): string {
   let out = ''
@@ -32,6 +32,8 @@ struct Index {
   @State title: string = 'Pocket Harness'
   @State summary: string = '点下方按钮跑一次协议自检'
   @State detail: string = ''
+  @State endpoint: string = '192.168.1.5:48100'
+  @State ticketText: string = ''
 
   build() {
     Column({ space: 12 }) {
@@ -49,6 +51,19 @@ struct Index {
       Button('跑一次完整客户端链路')
         .width('80%')
         .onClick(() => { this.runClient() })
+      Divider().margin({ top: 8, bottom: 4 })
+      Text('连一台真实的 Host').fontSize(13).fontColor('#666666').width('100%')
+      TextInput({ text: this.ticketText, placeholder: '粘贴 pocketharness://pair?t=... 配对码' })
+        .width('100%')
+        .fontSize(11)
+        .onChange((value: string) => { this.ticketText = value })
+      TextInput({ text: this.endpoint, placeholder: 'host:port' })
+        .width('100%')
+        .fontSize(11)
+        .onChange((value: string) => { this.endpoint = value })
+      Button('用系统随机数与 TCP 连过去')
+        .width('80%')
+        .onClick(() => { this.runPlatform() })
     }
     .padding(20)
     .width('100%')
@@ -63,6 +78,18 @@ struct Index {
       this.detail = result.detail
     }).catch((error: Object) => {
       this.summary = '客户端链路自检失败'
+      this.detail = '' + error
+    })
+  }
+
+  private runPlatform(): void {
+    this.summary = '正在连真实的 Host…'
+    this.detail = ''
+    runPlatformCheck(this.endpoint, this.ticketText).then((result: ClientCheckResult) => {
+      this.summary = result.summary
+      this.detail = result.detail
+    }).catch((error: Object) => {
+      this.summary = '真实链路失败'
       this.detail = '' + error
     })
   }

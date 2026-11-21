@@ -12,12 +12,13 @@ import { x25519PublicKey } from './core/curve25519'
 import { newDeviceIdentity } from './core/identity'
 import { decodeHello, encodeHello, verifyHelloProof } from './core/link_protocol'
 import { createNoisePrologue, NoiseIkSession } from './core/noise'
-import { decodeTicket, encodeTicket } from './core/pairing'
+import { decodeTicket, encodeTicket, parseEndpoint } from './core/pairing'
 import { RpcClient } from './core/rpc'
 import { SecureChannel, type FrameTransport } from './core/secure_channel'
 import { FRAME_KIND, decodeFrame, encodeEnvelope, encodeFrame, responseEnvelope } from './core/wire'
 import { LinkClient, LinkRefusedError } from './core/client'
 import type { JsonObject } from './core/json'
+import { openTcpTransport, systemRandom } from './platform.ohos'
 
 /** 用固定字节填充的随机源：让结果可复现。 */
 function fixedRandom(fill: number): (length: number) => Uint8Array {
@@ -165,6 +166,48 @@ export interface ClientCheckResult {
   readonly detail: string
 }
 
+/**
+ * 用**真的**系统随机数与 TCP 传输去连一台 Host，只做握手与一次 `session/list`。
+ *
+ * 与 `runClientCheck` 的分工：那个用内存管道证明流程对，这个证明鸿蒙侧的
+ * `@ohos.net.socket` 与 `cryptoFramework` 桥接对。地址从页面上传进来。
+ */
+export async function runPlatformCheck(
+  endpoint: string,
+  ticketText: string,
+): Promise<ClientCheckResult> {
+  const started = Date.now()
+  try {
+    const parsed = parseEndpoint(endpoint)
+    if (parsed === null) throw new Error('请输入 host:port，例如 192.168.1.5:48100')
+    const ticket = decodeTicket(ticketText)
+    const link = await LinkClient.connect({
+      ticket: ticket,
+      identity: newDeviceIdentity(systemRandom),
+      random: systemRandom,
+      openTransport: openTcpTransport,
+      timeoutMs: 15_000,
+      heartbeat: true,
+    })
+    const sessions = await link.rpc.call('session/list', { _request: {} }, 15_000)
+    const items = sessions.items
+    const count = Array.isArray(items) ? items.length : 0
+    link.close()
+    const elapsed = Date.now() - started
+    return {
+      ok: true,
+      summary: '真实链路通过：系统随机数 + TCP 握手 + session/list（' + elapsed + ' ms）',
+      detail:
+        'host ' + ticket.hostName + '\n' +
+        'endpoint ' + link.endpoint + '\n' +
+        'sessions ' + count + '\n' +
+        '路线 ' + link.route,
+    }
+  } catch (error) {
+    return { ok: false, summary: '真实链路失败', detail: '' + error }
+  }
+}
+
 export async function runClientCheck(): Promise<ClientCheckResult> {
   const started = Date.now()
   try {
@@ -269,3 +312,4 @@ export async function runClientCheck(): Promise<ClientCheckResult> {
     }
   }
 }
+
