@@ -61,11 +61,15 @@ function checkUser(): void {
   ok('a skill-injected message is marked', injected !== null && injected.injected)
 
   ok('an empty user message is dropped', readTranscriptRow(event('user/message', 5, { content: [] })) === null)
-  ok(
-    'a message with only an image still shows',
-    readTranscriptRow(event('user/message', 6, { content: [{ type: 'image', attachment: { attachmentId: 'a' } }] })) !==
-      null,
-  )
+  const onlyImage = readTranscriptRow(event('user/message', 6, {
+    content: [{ type: 'image', attachment: { attachmentId: 'a', mediaType: 'image/png', bytes: 9 } }],
+  }))
+  ok('a message with only an image still shows', onlyImage !== null)
+  // 只写「[1 张图片]」是不够的：界面要能画出那张图，所以引用必须留在行上。
+  ok('the row keeps the image reference', onlyImage !== null && onlyImage.images.length === 1)
+  ok('the reference points at the attachment',
+    onlyImage !== null && onlyImage.images[0].attachmentId === 'a')
+  ok('a text-only row carries no images', plain !== null && plain.images.length === 0)
 }
 
 function checkAssistant(): void {
@@ -86,6 +90,12 @@ function checkAssistant(): void {
     'an empty assistant message is dropped',
     readTranscriptRow(event('assistant/message', 9, { message: { content: [] } })) === null,
   )
+
+  const withImage = readTranscriptRow(event('assistant/message', 90, {
+    message: { content: [textBlock('画好了'), { type: 'image', attachment: { attachmentId: 'b' } }] },
+  }))
+  ok('an assistant row keeps its pictures too',
+    withImage !== null && withImage.images.length === 1 && withImage.text.indexOf('画好了') >= 0)
 }
 
 function checkTools(): void {
@@ -143,8 +153,8 @@ function checkBatch(): void {
 }
 
 function checkMerge(): void {
-  const first: TranscriptRow = { seq: 5, kind: ROW_USER, text: 'first', reasoning: '', name: '', arguments: '', isError: false, injected: false }
-  const later: TranscriptRow = { seq: 9, kind: ROW_USER, text: 'later', reasoning: '', name: '', arguments: '', isError: false, injected: false }
+  const first: TranscriptRow = { seq: 5, kind: ROW_USER, text: 'first', reasoning: '', name: '', arguments: '', isError: false, injected: false, images: [] }
+  const later: TranscriptRow = { seq: 9, kind: ROW_USER, text: 'later', reasoning: '', name: '', arguments: '', isError: false, injected: false, images: [] }
   const merged = mergeTranscriptRow([later], first)
   same(
     'a new row slots in by sequence, not by arrival',
@@ -153,7 +163,7 @@ function checkMerge(): void {
   )
 
   // 同一个 seq 带新内容再来一次：必须替换，否则一条消息显示两遍。
-  const revised: TranscriptRow = { seq: 5, kind: ROW_USER, text: 'first, edited', reasoning: '', name: '', arguments: '', isError: false, injected: false }
+  const revised: TranscriptRow = { seq: 5, kind: ROW_USER, text: 'first, edited', reasoning: '', name: '', arguments: '', isError: false, injected: false, images: [] }
   const again = mergeTranscriptRow(merged, revised)
   same(
     'the same sequence replaces instead of duplicating',

@@ -34,10 +34,11 @@
 | `src/settings.ts` | 电脑的全局设置：revision 校验、打码密钥、写回后的新 revision |
 | `src/workspace.ts` | 工作区文件：根目录的 `'.'`、扁平命名参数、搜索四字段全必填、路径规整 |
 | `src/composer.ts` | 发出去的内容块：标准 base64（不是 url 变体）、类型白名单、空 content 必须拦住 |
+| `src/images.ts` | 收回来的图片引用：只认 `attachment`、字节另取、标准 base64 解码 |
 
 ## 为什么能信
 
-`npm test` 跑十五套断言：
+`npm test` 跑十六套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -84,6 +85,12 @@
     分别报 `path is required` 与 `outside-workspace`）、反斜杠与 `..` 之外的多余段被
     清掉、`search` 的四个字段一个不少、目录排在文件前面、坏条目跳过、越界的文案
     中文化。
+15. **`test/composer.ts`** —— 发出去的内容：**标准 base64 带 `=` 填充**（与 Node 的
+    `Buffer` 在十种长度上逐一对齐）、图片类型白名单、uri 的查询串先切掉、文字在前
+    图片在后、空 `content` 被拦住（Host 会把它读成「继续上一轮」）、错误文案中文化。
+16. **`test/images.ts`** —— 收回来的图片：块里只有 `attachment` 没有字节、引用缺
+    `attachmentId` 就丢弃、取字节要把会话 id 放进 `request` 里、`+/` 与 `-_` 两套
+    字母表不能混用（用错必须报错而不是解出错字节）、无名图片按字节数显示大小。
 
 `npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做九件事：
 

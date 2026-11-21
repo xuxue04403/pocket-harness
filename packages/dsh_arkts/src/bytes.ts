@@ -185,6 +185,32 @@ export function decodeBase64Url(text: string): Uint8Array {
   return out.subarray(0, index)
 }
 
+/**
+ * 标准 base64 解码，带不带 `=` 填充都行。
+ *
+ * 与 `decodeBase64Url` 分开，是因为两者接受不同的字母表：把 `+/` 当 url 变体
+ * 来解会抛「not base64url」，而把 `-_` 当标准 base64 来解会静默错位。图片回来
+ * 的 `data` 是标准 base64，所以走这条。
+ */
+export function decodeBase64(text: string): Uint8Array {
+  const clean = text.replace(/=+$/, '')
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4))
+  let bits = 0
+  let accumulator = 0
+  let index = 0
+  for (let i = 0; i < clean.length; i++) {
+    const value = BASE64_STANDARD.indexOf(clean[i])
+    if (value < 0) throw new Error(`not base64: character ${clean[i]} at ${i}`)
+    accumulator = (accumulator << 6) | value
+    bits += 6
+    if (bits >= 8) {
+      bits -= 8
+      out[index++] = (accumulator >> bits) & 0xff
+    }
+  }
+  return out.subarray(0, index)
+}
+
 /** 定长小端写入，X25519 的字段元素用这个口径。 */
 export function writeUint32LE(out: Uint8Array, offset: number, value: number): void {
   out[offset] = value & 0xff

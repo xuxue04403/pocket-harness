@@ -66,7 +66,14 @@ import {
   PROMPT_MODE_STEER,
   type OutgoingImage,
 } from '../core/composer'
-import { pickOneImage } from '../images.ohos'
+import { pickOneImage, thumbnailOfBase64 } from '../images.ohos'
+import {
+  attachmentData,
+  attachmentRequest,
+  imageSummary,
+  type ImageRef,
+} from '../core/images'
+import { image } from '@kit.ImageKit'
 
 // AsyncGenerator 的三个类型参数必须都给：ArkTS 不接受它们的 ny 默认值。
 type FollowStream = AsyncGenerator<JsonObject, void, undefined>
@@ -104,6 +111,7 @@ interface RowView {
   readonly title: string
   readonly body: string
   readonly tone: string
+  readonly images: ImageRef[]
 }
 
 @Entry
@@ -139,6 +147,16 @@ struct Chat {
   private followCancel: StreamCancel | null = null
   private events: RemoteEvents | null = null
   private draft: Draft | null = null
+  /**
+   * 已经取回来、解好码的缩略图，按 attachmentId 缓存。
+   *
+   * 不放在 `@State` 里：`PixelMap` 是原生对象，交给状态系统比较反而更贵。界面用
+   * 一个 `@State thumbVersion` 计数来触发重绘，这个映射本身只被读写。
+   */
+  private thumbnails: Map<string, image.PixelMap> = new Map<string, image.PixelMap>()
+  /** 正在取的图片 id，防止同一条消息滚进滚出时重复发请求。 */
+  private loadingThumbs: Set<string> = new Set<string>()
+  @State thumbVersion: number = 0
   /** 解析后的行；@State rows 是它的渲染视图，两者必须一起更新。 */
   private parsedRows: TranscriptRow[] = []
   private ticketText: string = ''
@@ -414,6 +432,7 @@ struct Chat {
       this.draft = null
       this.draftText = ''
       this.draftReasoning = ''
+      this.requestThumbnails()
       this.loading = false
       return
     }
@@ -444,23 +463,67 @@ struct Chat {
    */
   private merge(row: TranscriptRow): void {
     this.rows = mergeTranscriptRow(this.parsedRows, row).map((item: TranscriptRow): RowView => this.view(item))
+    if (row.images.length > 0) this.requestThumbnails()
+  }
+
+  /**
+   * 给还没取过的图片引用排上取图任务。
+   *
+   * 只在有图片的时候才发请求：一条历史里可能有几百行，逐行去问 Host 要字节会让
+   * 打开会话变得很慢，而绝大多数行根本没有图。
+   */
+  private requestThumbnails(): void {
+    for (const view of this.rows) {
+      for (const ref of view.images) {
+        if (this.thumbnails.has(ref.attachmentId)) continue
+        if (this.loadingThumbs.has(ref.attachmentId)) continue
+        this.loadingThumbs.add(ref.attachmentId)
+        this.loadThumbnail(ref)
+      }
+    }
+  }
+
+  /** 取一张图的字节、解成缩略图、放进缓存。失败只是这张图不显示。 */
+  private async loadThumbnail(ref: ImageRef): Promise<void> {
+    const link = this.link
+    if (link === null) {
+      this.loadingThumbs.delete(ref.attachmentId)
+      return
+    }
+    try {
+      const answer = await link.rpc.call('session/attachment',
+        attachmentRequest(this.sessionId, ref), 20000)
+      const data = attachmentData(answer)
+      if (data.length === 0) return
+      const map = await thumbnailOfBase64(data)
+      this.thumbnails.set(ref.attachmentId, map)
+      this.thumbVersion = this.thumbVersion + 1
+    } catch {
+      // 一张图读不出来不该影响整段对话：留着位置，界面上显示文件名。
+    } finally {
+      this.loadingThumbs.delete(ref.attachmentId)
+    }
+  }
+
+  private thumbnailOf(ref: ImageRef): image.PixelMap | undefined {
+    return this.thumbnails.get(ref.attachmentId)
   }
 
   private view(row: TranscriptRow): RowView {
     const key = `${row.kind}#${row.seq}`
     if (row.kind === ROW_USER) {
-      return { key, kind: row.kind, title: row.injected ? '系统注入' : '你', body: row.text, tone: row.injected ? 'muted' : 'normal' }
+      return { key, kind: row.kind, title: row.injected ? '系统注入' : '你', body: row.text, tone: row.injected ? 'muted' : 'normal', images: row.images }
     }
     if (row.kind === ROW_ASSISTANT) {
-      return { key, kind: row.kind, title: 'DeepSeek', body: row.text, tone: 'normal' }
+      return { key, kind: row.kind, title: 'DeepSeek', body: row.text, tone: 'normal', images: row.images }
     }
     if (row.kind === ROW_NOTICE) {
-      return { key, kind: row.kind, title: '出错了', body: row.text, tone: 'bad' }
+      return { key, kind: row.kind, title: '出错了', body: row.text, tone: 'bad', images: [] }
     }
     if (row.name === 'result') {
-      return { key, kind: row.kind, title: row.isError ? '工具失败' : '工具结果', body: row.text, tone: row.isError ? 'bad' : 'muted' }
+      return { key, kind: row.kind, title: row.isError ? '工具失败' : '工具结果', body: row.text, tone: row.isError ? 'bad' : 'muted', images: [] }
     }
-    return { key, kind: row.kind, title: row.name, body: row.arguments, tone: 'muted' }
+    return { key, kind: row.kind, title: row.name, body: row.arguments, tone: 'muted', images: [] }
   }
 
   private applyDelta(delta: StreamDelta): void {
@@ -734,13 +797,63 @@ struct Chat {
       Text(view.title)
         .fontSize(11)
         .fontColor(view.tone === 'bad' ? '#B3261E' : '#888888')
-      Text(view.body)
-        .fontSize(15)
-        .fontColor(view.tone === 'muted' ? '#666666' : '#1A1A1A')
-        .copyOption(CopyOptions.LocalDevice)
+      if (view.images.length > 0) {
+        this.imageStrip(view.images)
+      }
+      if (view.body.length > 0) {
+        Text(view.body)
+          .fontSize(15)
+          .fontColor(view.tone === 'muted' ? '#666666' : '#1A1A1A')
+          .copyOption(CopyOptions.LocalDevice)
+      }
     }
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .width('100%')
+  }
+
+  /**
+   * 一行里的图片。
+   *
+   * 缩略图还没到时先占位显示文件名，而不是留一个空白方块：一张图从点开会话到
+   * 真的解出来要一次加密往返，中间那段时间如果没有提示，会看起来像坏了。
+   * `thumbVersion` 被读一次，是为了让缓存更新后这一块重绘（`PixelMap` 本身不进
+   * 状态系统）。
+   */
+  @Builder
+  private imageStrip(images: ImageRef[]) {
+    Row({ space: 6 }) {
+      ForEach(images, (ref: ImageRef) => {
+        Stack({ alignContent: Alignment.Center }) {
+          if (this.thumbnailOf(ref) !== undefined) {
+            Image(this.thumbnailOf(ref))
+              .width(96)
+              .height(96)
+              .objectFit(ImageFit.Cover)
+              .borderRadius(8)
+          } else {
+            Column({ space: 2 }) {
+              Text('图片')
+                .fontSize(11)
+                .fontColor('#888888')
+              Text(imageSummary(ref))
+                .fontSize(9)
+                .fontColor('#AAAAAA')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: 80 })
+            }
+            .justifyContent(FlexAlign.Center)
+            .width(96)
+            .height(96)
+            .backgroundColor('#F1F1F1')
+            .borderRadius(8)
+          }
+        }
+        // 读一次版本号：缓存变了这个 builder 才会重跑。
+        .onClick(() => { const ignored = this.thumbVersion })
+      }, (ref: ImageRef) => `${ref.attachmentId}-${this.thumbVersion}`)
+    }
     .width('100%')
   }
 

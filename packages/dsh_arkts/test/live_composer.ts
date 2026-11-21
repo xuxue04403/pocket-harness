@@ -17,6 +17,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { buildContent, outgoingImage, promptRequest, PROMPT_MODE_QUEUE } from '../src/composer'
+import { decodeBase64 } from '../src/bytes'
+import { attachmentData, attachmentRequest, imageRefsOfData } from '../src/images'
 import { connectLive, describeError, type LiveLink } from './live_common'
 import type { JsonObject } from '../src/json'
 
@@ -129,6 +131,21 @@ async function main(): Promise<void> {
     const data = `${fetched['data'] ?? ''}`
     ok('the bytes come back on demand', data.length > 0, `${data.length} base64 chars`)
     ok('the returned picture is the one we sent', data === image.data)
+
+    // 界面上真正走的是 images.ts 那套解析：确认它读得懂这条记录，且用它自己的
+    // 请求体能把字节取回来。单测只能喂造出来的形状，这里喂的是 Host 真发的。
+    const refs = imageRefsOfData(message)
+    ok('the shared parser finds the picture', refs.length === 1, `${refs.length}`)
+    if (refs.length === 1) {
+      const parsed = refs[0]
+      ok('it reads the media type', parsed.mediaType.startsWith('image/'), parsed.mediaType)
+      ok('it reads a real byte count', parsed.bytes > 0, `${parsed.bytes}`)
+      const again = await link.rpc.call('session/attachment',
+        attachmentRequest(sessionId, parsed), 20000)
+      const againData = attachmentData(again)
+      ok('the shared request body fetches the same bytes', againData === image.data)
+      ok('those bytes decode to a PNG', decodeBase64(againData)[0] === 0x89)
+    }
   } catch (error) {
     ok(`live composer run failed — ${describeError(error as Object)}`, false)
   } finally {

@@ -14,6 +14,8 @@
 
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { fileIo } from '@kit.CoreFileKit'
+import { image } from '@kit.ImageKit'
+import { decodeBase64 } from './core/bytes'
 import { mediaTypeFor, outgoingImage, type OutgoingImage } from './core/composer'
 
 /** 单张图片的上限：Host 侧的图片限制比这更严，先在手机上拦住明显过大的。 */
@@ -85,5 +87,56 @@ export async function pickOneImage(): Promise<PickedImage> {
     return { image: outgoingImage(bytes, name), problem: '', cancelled: false }
   } catch (error) {
     return { image: null, problem: `这张图片读不出来：${error}`, cancelled: false }
+  }
+}
+
+/**
+ * 把一个 PixelMap 压成 PNG 字节，方便界面按需取图后显示。
+ *
+ * 为什么要有这一步：ArkUI 的 `Image` 能吃 `PixelMap`，但**每次都要重新解码**。
+ * 会话滚回去再看一遍时，一张 4000×3000 的照片会卡住主线程。所以取回来的 base64
+ * 先解成 PixelMap 缓存住，只在这一张真的出现在屏幕上时才做。
+ *
+ * 两条鸿蒙口径：
+ * - `image.createImageSource(buf)` 吃 `ArrayBuffer`，`Uint8Array.buffer` 可能是
+ *   更大的底层缓冲区，必须先 `slice` 出真正的那一段，否则会把别的数据一起喂进去；
+ * - `PixelMap` 用完要 `release()`，否则一张一张累积起来会 OOM。
+ */
+export async function pixelMapOfBase64(data: string): Promise<image.PixelMap> {
+  const bytes = decodeBase64(data)
+  const source = image.createImageSource(bytes.buffer.slice(
+    bytes.byteOffset, bytes.byteOffset + bytes.byteLength))
+  try {
+    return await source.createPixelMap()
+  } finally {
+    source.release()
+  }
+}
+
+/** 图片字节的上限之外，再拦一道解码后的尺寸：超过这个就先缩。 */
+export const MAX_THUMBNAIL_EDGE = 1024
+
+/** 生成缩略图：先解成 PixelMap，再按最长边缩到 `MAX_THUMBNAIL_EDGE`。 */
+export async function thumbnailOfBase64(data: string): Promise<image.PixelMap> {
+  const bytes = decodeBase64(data)
+  const source = image.createImageSource(bytes.buffer.slice(
+    bytes.byteOffset, bytes.byteOffset + bytes.byteLength))
+  try {
+    const info = await source.getImageInfo()
+    const width = info.size.width
+    const height = info.size.height
+    const longest = width > height ? width : height
+    const options: image.DecodingOptions = {}
+    if (longest > MAX_THUMBNAIL_EDGE) {
+      const scale = MAX_THUMBNAIL_EDGE / longest
+      const size: image.Size = {
+        width: Math.round(width * scale),
+        height: Math.round(height * scale),
+      }
+      options.desiredSize = size
+    }
+    return await source.createPixelMap(options)
+  } finally {
+    source.release()
   }
 }

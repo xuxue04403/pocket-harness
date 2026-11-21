@@ -18,6 +18,7 @@ await build({ ...shared, entryPoints: ['test/skills.ts'], outfile: 'build/skills
 await build({ ...shared, entryPoints: ['test/settings.ts'], outfile: 'build/settings.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/workspace.ts'], outfile: 'build/workspace.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/composer.ts'], outfile: 'build/composer.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/images.ts'], outfile: 'build/images.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live.ts'], outfile: 'build/live.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_transcript.ts'], outfile: 'build/live_transcript.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/live_relay.ts'], outfile: 'build/live_relay.mjs', platform: 'node', target: 'es2022' })

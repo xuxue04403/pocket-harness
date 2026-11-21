@@ -83,7 +83,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（795 KB，内含 `ets/modules.abc` 492,792 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（822 KB，内含 `ets/modules.abc` 510,808 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -295,6 +295,29 @@ Host（建一个空会话、发一条带图的 prompt、轮询等 `user/message`
   电脑再跑一遍。`hasContent` 在客户端就拦住；`promptRequest` 也拒绝空数组。
 - **`mediaType` 只认四种**（png/jpeg/webp/gif）。相册 uri 常带 `?networkid=…`
   查询串，判后缀前必须切掉，否则 `.jpg?networkid=1` 认不出来。
+
+### 历史里的图片也能看见
+
+收回来的方向是另一套：事件里的图片块只有 `{type:'image', attachment:{attachmentId,
+mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字节留在附件表里，
+这样一条历史记录不会因为几张图而变重。`src/images.ts` 负责解析引用与拼
+`session/attachment` 的请求体，`images.ohos.ts` 负责把回来的 base64 解成
+`PixelMap` 并按最长边缩到 1024。
+
+三个坑：
+
+- **不要预取**。打开一个几百条的会话就把所有图片取一遍，等于几十次加密往返；
+  现在是「有一行真的带图」才发请求，而且同一张图按 `attachmentId` 只取一次。
+- **`Uint8Array.buffer` 不一定是刚好那一段**。`image.createImageSource` 吃
+  `ArrayBuffer`，直接把 `.buffer` 递进去会把底层多余的字节一起喂给解码器，
+  必须 `slice(byteOffset, byteOffset + byteLength)`。
+- **`PixelMap` 用完要 `release()`**，否则来回翻几次历史就 OOM。缓存放在
+  组件的普通字段里而不是 `@State`：原生对象交给状态系统比较反而更贵，界面靠一个
+  整数版本号触发重绘。
+
+`test/images.ts` 钉形状，`test/live_composer.ts` 里最后几条断言把**真实 Host 发回来
+的那条记录**喂进同一套解析函数，再用它自己的请求体把字节取一遍 —— 这样单测里
+造的形状与真链路必须一致，否则那几条会红。
 
 ## 二期路线建议
 

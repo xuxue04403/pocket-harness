@@ -12,6 +12,7 @@
  */
 
 import { arrayField, objectField, stringField, type JsonObject } from './json'
+import { imageRefsOf, type ImageRef } from './images'
 
 /** 一行 transcript。`seq` 是 Host 的持久序号，用来保持顺序。 */
 export interface TranscriptRow {
@@ -29,6 +30,13 @@ export interface TranscriptRow {
   readonly isError: boolean
   /** 只有 `user` 有：DSH 归于智能体而非人发的（技能、cron、子代理等）。 */
   readonly injected: boolean
+  /**
+   * 这一行带的图片引用（字节不在里面，要看图得另取）。
+   *
+   * 单独留一个字段而不是塞进 `text`，是因为界面要画缩略图：`text` 里只写
+   * 「[1 张图片]」的话，那张图就永远只能是一行字。
+   */
+  readonly images: ImageRef[]
 }
 
 export const ROW_USER = 'user'
@@ -49,8 +57,9 @@ const QUIET_TURN_ENDINGS: string[] = ['completed', 'aborted']
  * 所以每个字段都显式给出来。
  */
 function row(seq: number, kind: string, text: string, reasoning: string = '', name: string = '',
-  args: string = '', isError: boolean = false, injected: boolean = false): TranscriptRow {
-  return { seq, kind, text, reasoning, name, arguments: args, isError, injected }
+  args: string = '', isError: boolean = false, injected: boolean = false,
+  images: ImageRef[] = []): TranscriptRow {
+  return { seq, kind, text, reasoning, name, arguments: args, isError, injected, images }
 }
 
 /** 拼接一组内容块里的正文；`blockType` 决定取 `text` 还是 `reasoning`。 */
@@ -95,12 +104,14 @@ export function readTranscriptRow(record: Object): TranscriptRow | null {
   if (type === 'user/message') {
     const content = payload['content']
     let text = content === undefined ? '' : textOfContent(content)
-    const images = content === undefined ? 0 : countImages(content)
-    if (text.length === 0 && images === 0) return null
-    if (images > 0) text = text.length === 0 ? `[${images} 张图片]` : `${text}\n[${images} 张图片]`
+    const images = content === undefined ? [] : imageRefsOf(content)
+    if (text.length === 0 && images.length === 0) return null
+    if (images.length > 0) {
+      text = text.length === 0 ? `[${images.length} 张图片]` : `${text}\n[${images.length} 张图片]`
+    }
     const source = objectField(payload, 'source')
     const kind = source === undefined ? '' : stringField(source, 'kind', '')
-    return row(seq, ROW_USER, text, '', '', '', false, INJECTED_SOURCES.indexOf(kind) >= 0)
+    return row(seq, ROW_USER, text, '', '', '', false, INJECTED_SOURCES.indexOf(kind) >= 0, images)
   }
 
   if (type === 'assistant/message') {
@@ -108,10 +119,12 @@ export function readTranscriptRow(record: Object): TranscriptRow | null {
     const content = message === undefined ? undefined : message['content']
     const text = content === undefined ? '' : textOfContent(content, 'text')
     const reasoning = content === undefined ? '' : textOfContent(content, 'reasoning')
-    const images = content === undefined ? 0 : countImages(content)
-    if (text.length === 0 && reasoning.length === 0 && images === 0) return null
-    const shown = images > 0 ? (text.length === 0 ? `[${images} 张图片]` : `${text}\n[${images} 张图片]`) : text
-    return row(seq, ROW_ASSISTANT, shown, reasoning)
+    const images = content === undefined ? [] : imageRefsOf(content)
+    if (text.length === 0 && reasoning.length === 0 && images.length === 0) return null
+    const shown = images.length > 0
+      ? (text.length === 0 ? `[${images.length} 张图片]` : `${text}\n[${images.length} 张图片]`)
+      : text
+    return row(seq, ROW_ASSISTANT, shown, reasoning, '', '', false, false, images)
   }
 
   if (type === 'tool/call') {
