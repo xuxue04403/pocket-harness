@@ -105,6 +105,13 @@ interface HostOptions {
   readonly impersonate?: boolean
   /** 收下 hello 但不回任何东西，用来验证超时。 */
   readonly silent?: boolean
+  /**
+   * `$events` 的流开了、但第一帧不是 `ready`。
+   *
+   * 真机上这对应"Harness 版本旧到没有 remotes 服务"或网关自己出错：手机必须
+   * 把这条流关掉再降级，否则它会一直占着流名额，还让网关以为有人在回答。
+   */
+  readonly eventsWithoutReady?: boolean
 }
 
 /** 进程内的 Host：hello → Noise responder → 一个只认几个端点的 RPC 服务。 */
@@ -112,6 +119,8 @@ class FakeHost {
   readonly transport: Pipe
   /** 手机打到 `$events/result` 的载荷，按到达顺序记下来。 */
   readonly outcomes: JsonObject[] = []
+  /** 手机请求关掉的 streamId，按到达顺序记下来。 */
+  readonly closedStreams: number[] = []
   private readonly options: HostOptions
   private channel: SecureChannel | null = null
   private hostId: string
@@ -201,11 +210,26 @@ class FakeHost {
       this.send(responseEnvelope(id, { accepted: true }))
       return
     }
+    if (endpoint === 'link/stream.close') {
+      const streamId = inner?.['streamId']
+      if (typeof streamId === 'number') this.closedStreams.push(streamId)
+      this.send(responseEnvelope(id, {}))
+      return
+    }
     if (endpoint === 'link/stream.open') {
       const name = inner?.endpoint
       const streamId = 7
       this.send(responseEnvelope(id, { streamId }))
       if (name === '$events') {
+        if (this.options.eventsWithoutReady === true) {
+          // 只有一帧不是 ready 的东西：客户端必须据此失败**并**关流。
+          this.send(eventEnvelope({
+            streamId,
+            hasValue: true,
+            value: { type: 'emit', event: 'something-else', args: [] },
+          }))
+          return
+        }
         // 网关的转发事件流：先 ready，再推一条审批 waterfall。
         this.send(eventEnvelope({
           streamId,
@@ -471,6 +495,36 @@ async function checkRemoteEvents(): Promise<void> {
   link.close()
 }
 
+async function checkFailedEventStreamIsClosed(): Promise<void> {
+  // 旧版 Harness 没有 remotes 服务时会先开出流、再回一帧不是 ready 的东西。
+  // 客户端在这里必须做两件事：报错降级，以及**把流关掉** —— 链路上只有 16 条
+  // 流的名额，而且网关会把这条订阅当成"有人正在回答"，留着它后续审批就再也
+  // 到不了手机，界面上只会表现为"没弹窗"，极难查。
+  const f = fixture({ eventsWithoutReady: true })
+  const link = await LinkClient.connect(connectOptions(f))
+  let caught: Object | null = null
+  try {
+    await RemoteEvents.open(link.rpc, 2000)
+  } catch (error) {
+    caught = error
+  }
+  ok(
+    'an event stream that never says ready fails',
+    caught instanceof Error && caught.message.includes('did not start the event stream with ready'),
+    caught instanceof Error ? caught.message : String(caught),
+  )
+  // 关流是异步的（客户端在后台发 `link/stream.close`），给它一点时间。
+  for (let wait = 0; wait < 50 && f.host.closedStreams.length === 0; wait += 1) {
+    await new Promise<void>((resolve) => { setTimeout(resolve, 20) })
+  }
+  ok(
+    'the failed event stream is closed again',
+    f.host.closedStreams.length === 1,
+    `closed ${f.host.closedStreams.length}`,
+  )
+  link.close()
+}
+
 async function checkTicketRoundTrip(): Promise<void> {
   const f = fixture()
   ok('the ticket encodes to a pocketharness url', f.ticketText.startsWith('pocketharness://pair?t='))
@@ -493,6 +547,7 @@ async function main(): Promise<void> {
   await checkHelloTimeout()
   await checkRelayRoute()
   await checkRemoteEvents()
+  await checkFailedEventStreamIsClosed()
   await checkTicketRoundTrip()
 
   if (failures.length > 0) {

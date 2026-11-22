@@ -79,19 +79,32 @@ export class RemoteEvents {
   static async open(rpc: RpcClient, timeoutMs = 15_000): Promise<RemoteEvents> {
     const cancel: StreamCancel = { aborted: false, wake: () => undefined }
     const stream = rpc.openStream(REMOTE_EVENT_STREAM_ENDPOINT, {}, { timeoutMs, cancel })
-    const first = await withTimeout(stream.next(), timeoutMs, 'the Host did not start the event stream')
-    if (first.done === true) throw new Error('the Host closed the event stream before it was ready')
-    const ready = first.value
-    const type = stringField(ready, 'type', '')
-    if (type !== 'ready') throw new Error('the Host did not start the event stream with ready')
-    const clientId = stringField(ready, 'clientId', '')
-    if (clientId.length === 0) throw new Error('the Host sent no event client id')
-    const host = objectField(ready, 'host')
-    const home = host === undefined ? '' : stringField(host, 'home', '')
-    const events = new RemoteEvents(rpc, clientId, home)
-    events.cancel = cancel
-    events.pump(stream)
-    return events
+    try {
+      const first = await withTimeout(stream.next(), timeoutMs, 'the Host did not start the event stream')
+      if (first.done === true) throw new Error('the Host closed the event stream before it was ready')
+      const ready = first.value
+      const type = stringField(ready, 'type', '')
+      if (type !== 'ready') throw new Error('the Host did not start the event stream with ready')
+      const clientId = stringField(ready, 'clientId', '')
+      if (clientId.length === 0) throw new Error('the Host sent no event client id')
+      const host = objectField(ready, 'host')
+      const home = host === undefined ? '' : stringField(host, 'home', '')
+      const events = new RemoteEvents(rpc, clientId, home)
+      events.cancel = cancel
+      events.pump(stream)
+      return events
+    } catch (error) {
+      // 打开失败也必须把流关掉。链路上一共只有 16 条流的名额，而网关还会把
+      // 这条 `$events` 订阅当成"某个客户端正在回答"：留着它，后续审批就再也
+      // 到不了这台手机，而界面上看起来只是"没弹窗"。
+      cancel.aborted = true
+      cancel.wake()
+      // 只置位是不够的：`open` 只拉过一帧，生成器此刻停在 `yield` 上，
+      // 而 `wake()` 解的是"等下一帧"那个 await。再拉一次让它走到循环顶部的
+      // `aborted` 判断，`openStream` 的 `finally` 才会真的发出关流请求。
+      void stream.next().catch(() => undefined)
+      throw error
+    }
   }
 
   /** 后台读帧直到 Host 结束这条流。 */
