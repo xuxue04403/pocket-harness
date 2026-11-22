@@ -88,6 +88,10 @@ flutter build apk --release --split-per-abi
 
 三份按 CPU 架构拆开的包（v0.1.0-beta 实测）：`app-arm64-v8a-release.apk`（12.3 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（11.5 MB，老设备）、`app-x86_64-release.apk`（12.9 MB，模拟器）。不拆包的单包约 17 MB。
 
+> 只有「在手机上本机跑 dsh」那条路需要 proot 的二进制（`app/android/app/src/main/jniLibs/<abi>/lib*.so`），
+> 它体积不小、且带 GPL 条款，所以不入库；要用先跑一次 `tools/proot-fetch.ps1` 现取。
+> 只做远程操控的话，缺这几个文件也不影响构建与运行。
+
 > 发布签名从 `app/android/key.properties` 读（模板见 `app/android/key.properties.example`）。
 > 这两个文件与 keystore 都在 `.gitignore` 里：开源仓库不该带能签出「官方包」的私钥。
 > 没有 `key.properties` 时回落到 debug 签名，只为让 `flutter run --release` 能跑，不能分发。
