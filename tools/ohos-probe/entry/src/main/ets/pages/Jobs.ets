@@ -102,6 +102,12 @@ struct Jobs {
     const previous = this.link
     this.link = null
     if (previous !== null) previous.close()
+    // 定时器同理：重试会重新走进这里，旧的那个 5 秒轮询不关掉就会一直活着，
+    // 每重试一次多一条，最后变成对着一台连不上的电脑每秒发一堆请求。
+    if (this.poller >= 0) {
+      clearInterval(this.poller)
+      this.poller = -1
+    }
     try {
       const context = this.getUIContext().getHostContext() as Context
       const store = await HostStore.open(context)
