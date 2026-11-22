@@ -35,6 +35,7 @@ export class RelayDialer {
   #timer = null
   #closed = false
   #served = 0
+  #attempts = 0
 
   constructor({ url, room, token, onTransport, logger = null }) {
     this.#url = url
@@ -94,10 +95,16 @@ export class RelayDialer {
     })
     relay.on('joined', () => {
       joined = true
+      // A successful join is the only proof the relay is healthy, so the next
+      // failure starts the backoff from the beginning again.
+      this.#attempts = 0
       clearTimeout(timer)
     })
     relay.on('ready', () => {
       joined = true
+      // A phone actually reached us, so this relay works; rejoin immediately
+      // after it leaves rather than punishing the next phone with a delay.
+      this.#attempts = 0
       clearTimeout(timer)
       this.#served += 1
       this.#logger?.info?.('pocket-harness: relay paired with a phone')
@@ -121,7 +128,12 @@ export class RelayDialer {
 
   #scheduleRejoin() {
     if (this.#closed || this.#timer !== null) return
-    const delay = RETRY_DELAYS_MS[0]
+    // Walk the ladder instead of hammering the first rung. A relay that is down
+    // for maintenance would otherwise see one connection attempt every second
+    // forever, which is exactly what a rate limiter or a fail2ban rule reacts to.
+    const index = Math.min(this.#attempts, RETRY_DELAYS_MS.length - 1)
+    const delay = RETRY_DELAYS_MS[index]
+    this.#attempts += 1
     this.#timer = setTimeout(() => {
       this.#timer = null
       this.#join()

@@ -137,6 +137,59 @@ test('a wrong relay token is refused', async () => {
   }
 })
 
+test('a relay that stays down is retried with growing delays', async () => {
+  // Hammering a relay once a second forever is what a rate limiter reacts to.
+  // The delay ladder exists for this reason, so prove it actually walks it
+  // instead of reconnecting on the first rung forever.
+  const realWebSocket = globalThis.WebSocket
+  const startedAt = []
+  class DeadSocket extends EventTarget {
+    constructor(url) {
+      super()
+      this.url = url
+      this.binaryType = 'blob'
+      startedAt.push(Date.now())
+      // Fail like an unreachable relay: open never fires, close does.
+      setTimeout(() => {
+        const event = new Event('close')
+        event.code = 1006
+        event.reason = 'dead'
+        this.dispatchEvent(event)
+      }, 5)
+    }
+
+    send() {}
+
+    close() {}
+  }
+  globalThis.WebSocket = DeadSocket
+  const dialer = new RelayDialer({
+    url: 'ws://127.0.0.1:1/relay',
+    room: 'test-room-0005',
+    token: TOKEN,
+    onTransport: () => {
+      throw new Error('a dead relay must never hand over a transport')
+    },
+  })
+  try {
+    dialer.start()
+    await until(() => startedAt.length >= 3, 'the dialer did not retry at all', 10_000)
+  } finally {
+    await dialer.close()
+    globalThis.WebSocket = realWebSocket
+  }
+  const first = startedAt[1] - startedAt[0]
+  const second = startedAt[2] - startedAt[1]
+  // The ladder is 1s, 2s, 5s, ... so the second gap must be clearly larger, not
+  // merely equal by timer jitter.
+  assert.ok(
+    second > first * 1.5,
+    `the retry delay must grow: first ${first}ms, second ${second}ms`,
+  )
+  // The ladder starts at one second, so a fast loop is a bug worth naming.
+  assert.ok(first >= 800, `the first retry came after only ${first}ms`)
+})
+
 test('bytes cross the relay unchanged', async () => {
   const { relay, url } = await startRelay()
   const handed = []
