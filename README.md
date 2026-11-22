@@ -64,6 +64,19 @@
 
 ## 快速开始
 
+### 0. 拿到代码
+
+```bash
+git clone <本仓库地址> pocket-harness
+```
+
+仓库还没有公开的远端（正在发布 v0.1.0-beta），可以先从 release 附件里的
+`pocket-harness-0.1.0-beta.bundle` 离线克隆，里面有完整历史与 `v0.1.0-beta` 标签：
+
+```bash
+git clone pocket-harness-0.1.0-beta.bundle pocket-harness
+```
+
 ### 1. 在电脑上装 Host 插件
 
 需要 DeepSeek Harness 0.2.2 或更新的版本。
@@ -123,6 +136,7 @@ node run.mjs          # 监听 8080，/healthz 可探活
 cd packages\dsh_link; dart analyze; dart test
 
 # Host 插件与中继：30 个测试
+cd relay; npm install; cd ..      # 中继的测试会 import relay/server.mjs，它依赖 ws
 node --test host
 
 # Flutter 客户端：132 个测试
