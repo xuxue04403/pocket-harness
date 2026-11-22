@@ -77,6 +77,12 @@ struct Sessions {
   private async connect(): Promise<void> {
     this.loading = true
     this.error = ''
+    // 点「重试」会再建一条链路，旧的那条必须在这里关掉：它可能还在握着电脑上的
+    // 连接名额，而这个页面是唯一持有它的人。一直不关，攒够八条之后电脑就开始
+    // 拒新连接，表现成「越重试越连不上」。
+    const previous = this.link
+    this.link = null
+    if (previous !== null) previous.close()
     try {
       const ticket: PairingTicket = decodeTicket(this.ticketText)
       this.hostName = ticket.hostName
