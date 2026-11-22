@@ -82,7 +82,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1222 KB，内含 `ets/modules.abc` 777,572 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1224 KB，内含 `ets/modules.abc` 778,900 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -124,7 +124,7 @@ npm install --registry=https://repo.harmonyos.com/npm `
 .\build.ps1                      # 也可以用 -Sdk 指定；不给就读 OHOS_BASE_SDK_HOME / DEVECO_SDK_HOME
 ```
 
-产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,251,005 字节）与 `entry-default-signed.hap`（1,293,624 字节，`verify: Verify success`）。
+产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,253,152 字节）与 `entry-default-signed.hap`（1,300,489 字节，`verify: Verify success`）。
 
 CI 里的 `harmony` job 走的就是这一条，且是手动触发（`workflow_dispatch`）：它会先检查 `OHOS_BASE_SDK_HOME` / `DEVECO_SDK_HOME` 下有没有摆好的 SDK，没有就把上面第 2 步的布局要求打出来并失败，不会假装构建成功。
 

@@ -172,6 +172,8 @@ struct Chat {
    * 一个 `@State thumbVersion` 计数来触发重绘，这个映射本身只被读写。
    */
   private thumbnails: Map<string, image.PixelMap> = new Map<string, image.PixelMap>()
+  /** 缩略图缓存上限：这是一张原生 `PixelMap`，不释放就一直占着内存。 */
+  private static readonly THUMBNAIL_LIMIT: number = 12
   /** 正在取的图片 id，防止同一条消息滚进滚出时重复发请求。 */
   private loadingThumbs: Set<string> = new Set<string>()
   @State thumbVersion: number = 0
@@ -199,6 +201,10 @@ struct Chat {
     if (events !== null) events.close()
     this.link?.close()
     this.link = null
+    // 离开这一页时把缩略图全部还给系统：PixelMap 是原生对象，这个页面没了
+    // 就再也没人会用它们了。
+    for (const map of this.thumbnails.values()) map.release()
+    this.thumbnails.clear()
   }
 
   private stopStream(): void {
@@ -543,7 +549,7 @@ struct Chat {
       const data = attachmentData(answer)
       if (data.length === 0) return
       const map = await thumbnailOfBase64(data)
-      this.thumbnails.set(ref.attachmentId, map)
+      this.rememberThumbnail(ref.attachmentId, map)
       this.thumbVersion = this.thumbVersion + 1
     } catch {
       // 一张图读不出来不该影响整段对话：留着位置，界面上显示文件名。
@@ -554,6 +560,25 @@ struct Chat {
 
   private thumbnailOf(ref: ImageRef): image.PixelMap | undefined {
     return this.thumbnails.get(ref.attachmentId)
+  }
+
+  /**
+   * 放进缩略图缓存，并把最旧的挤出去。
+   *
+   * 挤出去的 `PixelMap` 必须显式 `release()`：它是原生对象，被 Map 丢掉的时候
+   * 垃圾回收不一定会立刻把底层像素还回去。一条长会话滚过去就是几十张图，
+   * 不设上限的话内存只增不减。
+   */
+  private rememberThumbnail(attachmentId: string, map: image.PixelMap): void {
+    this.thumbnails.delete(attachmentId)
+    this.thumbnails.set(attachmentId, map)
+    while (this.thumbnails.size > Chat.THUMBNAIL_LIMIT) {
+      const oldest = this.thumbnails.keys().next()
+      if (oldest.done === true) break
+      const dropped = this.thumbnails.get(oldest.value)
+      this.thumbnails.delete(oldest.value)
+      if (dropped !== undefined) dropped.release()
+    }
   }
 
   private view(row: TranscriptRow): RowView {
