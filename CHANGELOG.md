@@ -30,7 +30,7 @@
   ```
 
 - **只在 Android 模拟器与构建流水线上验证过**，还没有真机回归。
-- **鸿蒙侧不在此版本范围内**：ArkTS 宿主已经能编出 HAP 并跑通大部分界面（含自研二维码解码器、系统相机扫码），但那是另一条交付线，见 [docs/harmony-packaging.md](harmony-packaging.md)。
+- **鸿蒙侧不在此版本范围内**：ArkTS 宿主已经能编出**已签名、可校验**的 HAP 并跑通大部分界面（含自研二维码解码器、系统相机扫码），但那是另一条交付线，见 [docs/harmony-packaging.md](harmony-packaging.md)。
 - **用的是项目自建 keystore 的 release 签名**（`CN=Pocket Harness`，证书 SHA-256 指纹 `01:A1:01:F8:0B:11:7F:50:B4:43:30:05:51:5C:78:DF:D7:37:D2:56:36:E5:16:F5:D6:50:A2:D1:32:87:FD:69`），不是调试签名，后续同 key 版本可覆盖安装；但没有应用商店级别的签名，装包时系统仍会提示未知来源。keystore 与 `key.properties` 在 `.gitignore` 里，不进仓库。
 - 公网中继只在局域网与 loopback 上验证过，**未在公网 VPS 实测**。
 
