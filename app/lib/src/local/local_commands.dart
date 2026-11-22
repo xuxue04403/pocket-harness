@@ -179,3 +179,71 @@ bool looksLikeUnprovisioned(String output) =>
     output.contains('No such file or directory') ||
     output.contains('not found') ||
     output.contains('unable to select packages');
+
+/// 下载时的临时文件。留着它就能续传，删掉它就是从零开始 ——
+/// 所以只有确认拿到完整文件之后才 rename 到正式名字。
+String partPathOf(String archivePath) => '$archivePath.part';
+
+/// 有半截文件、且它还没到总长，就该续传。
+///
+/// `total` 为 null 或 -1 表示镜像没给 `Content-Length`：这种情况下无法判断
+/// 半截文件是否已经完整，仍然续传 —— 让服务端用 206 / 416 来裁决，
+/// 比在本地猜安全。
+bool shouldResume(int downloaded, int? total) {
+  if (downloaded <= 0) {
+    return false;
+  }
+  if (total == null || total <= 0) {
+    return true;
+  }
+  return downloaded < total;
+}
+
+/// 续传请求头。只发一个字节范围，服务端不支持时按 HTTP 语义会回 200 整份。
+String rangeHeaderValue(int downloaded) => 'bytes=$downloaded-';
+
+/// 解析 `df -k <path>` 的可用空间，单位字节。
+///
+/// 只认能解析出行号的那一行：toybox 的 `df` 在设备名很长时会把输出折行，
+/// 从后往前找第一个「第四列是整数」的行最稳。表头行（`Available`）解析失败，
+/// 自然被跳过。
+///
+/// 注意 toybox 的 `df` **没有 `-m`**（会报 `df: Unknown option 'm'`），
+/// 默认单位就是 1024 字节。
+int? freeBytesFromDf(String output) {
+  final List<String> lines = output.split('\n');
+  for (int index = lines.length - 1; index >= 0; index -= 1) {
+    final List<String> fields =
+        lines[index].trim().split(RegExp(r'\s+')).where((String f) => f.isNotEmpty).toList();
+    if (fields.length < 4) {
+      continue;
+    }
+    final int? blocks = int.tryParse(fields[3]);
+    if (blocks == null) {
+      continue;
+    }
+    return blocks * 1024;
+  }
+  return null;
+}
+
+/// 空间不够时的说法。够就返回 null。
+///
+/// 这一步值得单独做：装到一半 ENOSPC 的报错藏在 `apk` 的上百行输出里，
+/// 用户看到的只是「安装失败」。
+String? describeSpaceShortfall(int freeBytes, int requiredBytes) {
+  if (freeBytes >= requiredBytes) {
+    return null;
+  }
+  return '这台手机只剩 ${spaceLabel(freeBytes)} 可用，装下 dsh 需要 ${spaceLabel(requiredBytes)}。'
+      '请先清出空间再试。';
+}
+
+/// 体积的人话写法。装一次要 2.0 GB，用 MB 说会让人以为是 2000 MB 的小事。
+String spaceLabel(int bytes) {
+  const int gb = 1024 * 1024 * 1024;
+  if (bytes >= gb) {
+    return '${(bytes / gb).toStringAsFixed(1)} GB';
+  }
+  return '${(bytes / (1024 * 1024)).round()} MB';
+}

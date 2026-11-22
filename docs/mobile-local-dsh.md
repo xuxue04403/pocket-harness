@@ -97,6 +97,35 @@ dsh web: http://127.0.0.1:8123/?token=<43 字符 base64url>
 3. **进程与端口的生命周期。** 目前 `dsh web` 是前台进程，需要 App 侧持有一个服务进程、退出时收掉，
    并把 token 从 stdout 抓出来交给 WebView 或直接喂给 ArkTS/Dart 客户端。
 
+## App 里已经做到哪一步
+
+上面三件事里，第 1 件与第 3 件已经落进代码，第 2 件做到了「能下能续传，但只在模拟器上试过」：
+
+| 位置 | 做什么 |
+| --- | --- |
+| `app/android/app/src/main/jniLibs/<abi>/libproot.so` | 静态 proot（Alpine `proot-static` 5.4.0，arm64-v8a 402,632 字节 / x86_64 268,408 字节），由 `tools/proot-fetch.ps1` 现取，不入库 |
+| `app/android/app/build.gradle.kts` | `packaging { jniLibs { useLegacyPackaging = true } }` —— 否则 AGP 8 把 .so 直接从 APK 映射，目录里没有文件，exec 无从谈起 |
+| `MainActivity.kt` | `MethodChannel('cn.pocketharness/native')` 的 `paths/start/stop/running/killAll` 与一条 `EventChannel` 逐行回输出；`ProcessBuilder` 的环境被清成一个只有 `PATH`、`HOME` 的环境 |
+| `app/lib/src/local/local_commands.dart` | 纯函数：路径布局、proot 命令行、四个安装脚本、token 抓取、续传与空间算术 |
+| `app/lib/src/local/local_runner.dart` | 五步安装（下载 → 解压 → DNS/源 → node → dsh）与启动、停止 |
+| `app/lib/src/pages/local_page.dart` | 进度、失败原文、启动/停止/打开界面 |
+
+两个新补的、值得单独说的点：
+
+- **断点续传**。下载写 `<archive>.part`，下次带着 `Range: bytes=<已有字节>-` 去要；服务端回 206 就 append，
+  回 200（它忽略了 Range）就丢掉半截从头写 —— **拼错的 tar.gz 会在解压时才炸，那时已经过去十分钟**。
+  只有确认字节数够了才 `rename` 到正式文件名。换镜像时保留 `.part`：两个镜像的内容是同一份字节。
+- **装前空间检查**。`df -k <filesDir>` 的可用量不足 2.6 GB 就直接说「只剩 X、需要 Y」，
+  而不是让 `apk` 装到一半 ENOSPC（那个报错藏在它上百行输出里）。toybox 的 `df` **没有 `-m`**，
+  默认单位就是 1024 字节，多给一个 `-m` 会直接报 `Unknown option 'm'`。
+
+**默认不露出入口**：`kLocalDshEnabled` 是 `bool.fromEnvironment('POCKET_HARNESS_LOCAL_DSH')`，
+beta 包不带这个 define，所以首页没有按钮；要试用得自己
+`flutter build apk --release --dart-define=POCKET_HARNESS_LOCAL_DSH=true`。
+理由是模拟器根本没有出网能力（`ping dl-cdn.alpinelinux.org` 100% 丢包，`ping 10.0.2.2` 正常），
+这条下载路径至今没在能上网的设备上跑过一遍完整的。
+
+
 ## 与「远程操控」的关系
 
 这两条路并不互斥，共用同一份协议核心：

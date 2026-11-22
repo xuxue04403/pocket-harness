@@ -170,8 +170,77 @@ void main() {
     });
   });
 
-  group('判断「还没装好」', () {
-    test('缺文件、缺命令、缺包都算没装好', () {
+  group('续传', () {
+    test('.part 就在正式文件后面加后缀', () {
+      expect(partPathOf('/data/files/alpine.tar.gz'), '/data/files/alpine.tar.gz.part');
+    });
+
+    test('一个字节都没有就不算续传', () {
+      expect(shouldResume(0, 1000), isFalse);
+      expect(shouldResume(-1, 1000), isFalse);
+    });
+
+    test('没下满就该续传', () {
+      expect(shouldResume(500, 1000), isTrue);
+    });
+
+    test('已经下满就不用续传（等改名）', () {
+      expect(shouldResume(1000, 1000), isFalse);
+      expect(shouldResume(1200, 1000), isFalse);
+    });
+
+    test('镜像没给 Content-Length 时仍然续传，让服务端裁决', () {
+      expect(shouldResume(500, null), isTrue);
+      expect(shouldResume(500, -1), isTrue);
+      expect(shouldResume(0, null), isFalse);
+    });
+
+    test('Range 头是从已下载的位置到结尾', () {
+      expect(rangeHeaderValue(12345), 'bytes=12345-');
+      expect(rangeHeaderValue(0), 'bytes=0-');
+    });
+  });
+
+  group('可用空间', () {
+    test('解析 toybox df 的 1K 块（没有 -m，默认就是 1024 字节）', () {
+      const String output = 'Filesystem       1K-blocks    Used Available Use% Mounted on\n'
+          '/dev/block/dm-43   6082144 2065944   4016200  34% /mnt/pass_through/0/emulated\n';
+      expect(freeBytesFromDf(output), 4016200 * 1024);
+    });
+
+    test('表头行解析不出数字，会跳过', () {
+      expect(freeBytesFromDf('Filesystem 1K-blocks Used Available Use% Mounted on\n'), isNull);
+    });
+
+    test('空输出返回 null，不抛', () {
+      expect(freeBytesFromDf(''), isNull);
+    });
+
+    test('设备名折行时从后往前找，取到最后那条数据行', () {
+      const String output = 'Filesystem 1K-blocks Used Available Use% Mounted on\n'
+          '-128G  100 200 300 40% /data\n';
+      expect(freeBytesFromDf(output), 300 * 1024);
+    });
+
+    test('够了不说话', () {
+      expect(describeSpaceShortfall(3000 * 1024 * 1024, 2600 * 1024 * 1024), isNull);
+    });
+
+    test('不够要说清两个数字', () {
+      final String text = describeSpaceShortfall(1000 * 1024 * 1024, 2600 * 1024 * 1024)!;
+      // 1000 MB < 1 GB（1024 MB），所以按 MB 说；需求那侧超过 1 GB 按 GB 说。
+      expect(text, contains('1000 MB'));
+      expect(text, contains('2.5 GB'));
+      expect(text, contains('清出空间'));
+    });
+
+    test('体积按 GB 说，小于 1 GB 才回退到 MB', () {
+      expect(spaceLabel(2 * 1024 * 1024 * 1024), '2.0 GB');
+      expect(spaceLabel(500 * 1024 * 1024), '500 MB');
+    });
+  });
+
+  group('判断「还没装好」', () {    test('缺文件、缺命令、缺包都算没装好', () {
       expect(looksLikeUnprovisioned('sh: dsh: not found'), isTrue);
       expect(looksLikeUnprovisioned('proot: /bin/sh: No such file or directory'), isTrue);
       expect(looksLikeUnprovisioned('ERROR: unable to select packages:'), isTrue);

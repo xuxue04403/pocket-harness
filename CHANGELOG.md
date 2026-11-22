@@ -23,7 +23,7 @@
 
 ### 已知限制
 
-- **本机运行 dsh 未开启**：PRoot + Alpine 这条路已经实证能跑起来（`dsh web` 返回 200，见 [docs/mobile-local-dsh.md](mobile-local-dsh.md)），但首次要下载约 1.6 GB 的 rootfs，进度与断点续传还没打磨，所以这个入口在 beta 里默认不露出。要试用可以自行构建：
+- **本机运行 dsh 未开启**：PRoot + Alpine 这条路已经实证能跑起来（`dsh web` 返回 200，见 [docs/mobile-local-dsh.md](mobile-local-dsh.md)），但首次要下载约 1.6 GB 的 rootfs、装完占 2.0 GB，所以这个入口在 beta 里默认不露出。现在支持断点续传（`.part` + `Range`，换镜像也接着下）与装前空间检查（不足 2.6 GB 直接说清楚，不会装到一半 ENOSPC）。要试用可以自行构建：
 
   ```bash
   flutter build apk --release --dart-define=POCKET_HARNESS_LOCAL_DSH=true

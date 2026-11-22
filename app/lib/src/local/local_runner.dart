@@ -70,6 +70,7 @@ class LocalRunner {
     final String result = await _runCapture(
       tag: 'probe',
       argv: inRootfs(layout, 'node --version && dsh --version'),
+      allowFailure: true,
     );
     return result.contains('v2') && result.contains(kDshVersion);
   }
@@ -86,10 +87,22 @@ class LocalRunner {
       ));
     }
 
-    // 1. 下载。已经有完整文件就跳过 —— 用体积判断，因为 Alpine 的 tar.gz
-    //    没有可靠的固定大小可以校验。
+    // 0. 空间。装完 2.0 GB，门槛 2.6 GB。放在最前面，否则装到一半才 ENOSPC，
+    //    而那时的报错藏在 apk 的上百行输出里，看不出是磁盘问题。
+    report(ProvisionStep.download, detail: '检查可用空间');
+    final int? free = await _freeBytes(layout);
+    if (free != null) {
+      final String? shortfall = describeSpaceShortfall(free, LocalLayout.requiredFreeBytes);
+      if (shortfall != null) {
+        throw LocalDshError(shortfall);
+      }
+    }
+
+    // 1. 下载。已经有完整文件就跳过；只有半截就续传 —— 1.6 GB 断一次重来
+    //    对手机是灾难。
     final File archive = File(layout.archivePath);
-    if (!await archive.exists() || await archive.length() < 1000 * 1000) {
+    final int have = await archive.exists() ? await archive.length() : 0;
+    if (have < 1000 * 1000) {
       report(ProvisionStep.download, detail: '连接镜像');
       await _download(layout, archive, onProgress: (int got, int total) {
         report(
@@ -190,6 +203,21 @@ class LocalRunner {
     url = null;
   }
 
+  /// `df -k` 一次，拿去算可用空间。失败（比如 toybox 输出格式变了）就返回
+  /// null —— 空间检查是保护措施，不该变成新的失败点。
+  Future<int?> _freeBytes(LocalLayout layout) async {
+    final String output = await _runCapture(
+      tag: 'space',
+      argv: <String>['/system/bin/df', '-k', layout.filesDir],
+      allowFailure: true,
+    );
+    return freeBytesFromDf(output);
+  }
+
+  /// 下载 rootfs，能从 `.part` 续传。
+  ///
+  /// 两个镜像依次试：换镜像时**保留** `.part`，因为两个镜像的内容是同一份
+  /// Alpine minirootfs，字节级一致；从零重下 1.6 GB 才是最坏的选择。
   Future<void> _download(
     LocalLayout layout,
     File target,
@@ -198,20 +226,31 @@ class LocalRunner {
     Object? lastError;
     for (int variant = 0; variant < 2; variant += 1) {
       final String url = rootfsUrlFor(layout.abi, variant: variant);
+      final File temp = File(partPathOf(target.path));
       try {
         await target.parent.create(recursive: true);
-        final File temp = File('${target.path}.part');
         final HttpClient client = HttpClient();
         client.connectionTimeout = const Duration(seconds: 20);
         try {
+          final int already = await temp.exists() ? await temp.length() : 0;
           final HttpClientRequest request = await client.getUrl(Uri.parse(url));
+          if (already > 0 && shouldResume(already, null)) {
+            request.headers.set(HttpHeaders.rangeHeader, rangeHeaderValue(already));
+          }
           final HttpClientResponse response = await request.close();
-          if (response.statusCode != 200) {
+          // 206 = 服务端答应了续传；200 = 它忽略了 Range，会从头发整份，
+          // 这时手里的半截必须丢掉，否则拼出一个坏文件。
+          final bool resuming = response.statusCode == 206 && already > 0;
+          if (response.statusCode != 200 && response.statusCode != 206) {
             throw LocalDshError('镜像回了 HTTP ${response.statusCode}：$url');
           }
-          final int total = response.contentLength;
-          int got = 0;
-          final IOSink sink = temp.openWrite();
+          final int total = resuming
+              ? already + response.contentLength
+              : response.contentLength;
+          int got = resuming ? already : 0;
+          final IOSink sink = temp.openWrite(
+            mode: resuming ? FileMode.append : FileMode.write,
+          );
           try {
             await for (final List<int> chunk in response) {
               sink.add(chunk);
@@ -220,6 +259,10 @@ class LocalRunner {
             }
           } finally {
             await sink.close();
+          }
+          // 半截文件绝不能变成正式名字：改名就等于宣布「这是完整 rootfs」。
+          if (total > 0 && got < total) {
+            throw LocalDshError('只下到 ${_mb(got)} / ${_mb(total)}，接着下。');
           }
           await temp.rename(target.path);
           return;
@@ -233,13 +276,17 @@ class LocalRunner {
     throw LocalDshError('两个镜像都下不下来：$lastError');
   }
 
-  Future<String> _runCapture({required String tag, required List<String> argv}) async {
+  Future<String> _runCapture({
+    required String tag,
+    required List<String> argv,
+    bool allowFailure = false,
+  }) async {
     final StringBuffer buffer = StringBuffer();
     await _runToEnd(
       tag: tag,
       argv: argv,
       onLine: buffer.writeln,
-      allowFailure: true,
+      allowFailure: allowFailure,
     );
     return buffer.toString();
   }
