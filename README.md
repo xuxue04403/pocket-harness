@@ -120,7 +120,7 @@ cd packages\dsh_link; dart analyze; dart test
 # Host 插件与中继：13 个测试
 node --test host
 
-# Flutter 客户端：80 个测试
+# Flutter 客户端：120 个测试
 cd app; flutter analyze; flutter test
 ```
 
