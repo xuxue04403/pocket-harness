@@ -96,7 +96,8 @@ try {
 }
 
 $uploadBase = ($release.upload_url -replace '\{.*$', '')
-foreach ($asset in @('pocket-harness-0.1.0-beta-arm64-v8a.apk', 'pocket-harness-0.1.0-beta-armeabi-v7a.apk', 'pocket-harness-0.1.0-beta-x86_64.apk', 'SHA256SUMS.txt')) {
+# bundle 也一起传：仓库还没公开时，它是别人拿到完整历史（含 tag）的唯一途径。
+foreach ($asset in @('pocket-harness-0.1.0-beta-arm64-v8a.apk', 'pocket-harness-0.1.0-beta-armeabi-v7a.apk', 'pocket-harness-0.1.0-beta-x86_64.apk', 'SHA256SUMS.txt', 'RELEASE_NOTES.md', 'pocket-harness-0.1.0-beta.bundle')) {
     $path = Join-Path $dist $asset
     if (-not (Test-Path $path)) { Write-Host "跳过缺失的 $asset"; continue }
     $bytes = [IO.File]::ReadAllBytes($path)
