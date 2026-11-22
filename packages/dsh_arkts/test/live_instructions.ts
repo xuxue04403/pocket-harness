@@ -7,6 +7,8 @@
 // 中途失败，`finally` 里也会尝试写回，不把用户的指令文件留在半路。
 
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { connectLive, describeError, type LiveLink } from './live_common'
 import { arrayField, stringField, type JsonObject } from '../src/json'
 import {
@@ -20,8 +22,13 @@ import {
 
 const failures: string[] = []
 
-/** 这个仓库本身：它带 `.git`，所以项目链一定能被发现。 */
-const REPO = 'D:\\IDE\\dsh-bot'
+/**
+ * 这个仓库本身：它带 `.git`，所以项目链一定能被发现。
+ *
+ * 从本文件的位置反推，而不是写死绝对路径 —— 写死的那版只在这台机器上成立，
+ * 换一台电脑（或换一个目录名）就会在第一条断言上莫名其妙地红。
+ */
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 /**
  * 仓库里一份带指令文件的嵌套检出。
@@ -30,8 +37,12 @@ const REPO = 'D:\\IDE\\dsh-bot'
  * 目录断言「项目链非空」会红得莫名其妙。这里改用 `ref/dsh-go`：它自带 `.git`
  * 与两份 `AGENTS.md`/`CLAUDE.md`，既证明项目链能找到文件，也证明上溯会在最近的
  * 项目标记处停下、不会跑到外层仓库。
+ *
+ * `ref/` 是被忽略的本地检出，没有它就跳过这一段而不是失败 —— 这条脚本存在的
+ * 目的是验证端点，不是要求每个人都把参考仓库摆好。
  */
-const NESTED = 'D:\\IDE\\dsh-bot\\ref\\dsh-go'
+const NESTED = join(REPO, 'ref', 'dsh-go')
+const hasNested = existsSync(join(NESTED, '.git'))
 
 function ok(label: string, condition: boolean, detail = ''): void {
   if (condition) {
@@ -99,22 +110,27 @@ async function main(): Promise<void> {
 
     // 根目录没有指令文件是正常的：指令在这台电脑的用户级链里。真正要证明的是
     // 「有 .git 的子目录里的指令能被发现」，所以换一个嵌套检出再问一次。
-    const nested = await link.rpc.call(
-      'pocketInstructions/describe', { cwd: NESTED } as JsonObject, 20000)
-    const nestedRoot = stringField(nested, 'projectRoot', '')
-    ok('a nested checkout is its own project root',
-      nestedRoot.toLowerCase().endsWith('dsh-go'), nestedRoot)
-    let projectRows = 0
-    for (const row of arrayField(nested, 'files')) {
-      if (row !== null && typeof row === 'object') {
-        if (stringField(row as JsonObject, 'scope') === 'project') projectRows += 1
+    let nested: JsonObject = described
+    if (hasNested) {
+      nested = await link.rpc.call(
+        'pocketInstructions/describe', { cwd: NESTED } as JsonObject, 20000)
+      const nestedRoot = stringField(nested, 'projectRoot', '')
+      ok('a nested checkout is its own project root',
+        nestedRoot.toLowerCase().endsWith('dsh-go'), nestedRoot)
+      let projectRows = 0
+      for (const row of arrayField(nested, 'files')) {
+        if (row !== null && typeof row === 'object') {
+          if (stringField(row as JsonObject, 'scope') === 'project') projectRows += 1
+        }
       }
+      ok('the nested checkout contributes its own instruction files', projectRows > 0,
+        `${projectRows} project file(s)`)
+      ok('the walk stops at the nearest project marker',
+        nestedRoot.toLowerCase() === NESTED.toLowerCase(),
+        nestedRoot)
+    } else {
+      console.log(`  skip ref/dsh-go is not checked out here (${NESTED})`)
     }
-    ok('the nested checkout contributes its own instruction files', projectRows > 0,
-      `${projectRows} project file(s)`)
-    ok('the walk stops at the nearest project marker',
-      nestedRoot.toLowerCase() === NESTED.toLowerCase(),
-      nestedRoot)
 
     ok('at least one file exists to edit', allPaths.length > 0, allPaths.join(', '))
     if (allPaths.length === 0) throw new Error('no instruction file to exercise')

@@ -7,7 +7,8 @@
  * 纠错等级都不一样，足以覆盖解码器里所有依赖版本的分支。
  *
  * 数据来自 `probe/qr_fixtures.json`（由 `packages/dsh_arkts/tools/gen_qr_fixtures.mjs`
- * 用 node-qrcode 生成，再用 jsQR 独立验证过），`tools/gen_qr_samples.mjs` 负责拷贝。
+ * 用 node-qrcode 生成，再用 jsQR 独立验证过），本文件由
+ * `packages/dsh_arkts/tools/gen_qr_samples.mjs` 生成，不要手改。
  */
 
 /** 一张待解的样张。 */
