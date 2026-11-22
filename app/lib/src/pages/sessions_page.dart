@@ -42,9 +42,15 @@ class _SessionsPageState extends State<SessionsPage> {
   }
 
   Future<List<SessionSummary>> _load() async {
+    // 每次重试都会新建一条链路，旧的那条必须在这里关掉：它可能还在握着
+    // 电脑上的连接名额，而这个页面是唯一持有它的人。反复点「刷新」而不关，
+    // 攒够八条之后电脑就开始拒新连接，表现成「越刷越连不上」。
+    final previous = _link;
     setState(() {
+      _link = null;
       _error = null;
     });
+    if (previous != null) unawaitedClose(previous);
     try {
       final identity = await widget.store.identity();
       final link = await HostLink.connect(widget.ticket, identity);
