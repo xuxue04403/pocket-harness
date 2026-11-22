@@ -1,19 +1,21 @@
 ﻿# 在 Windows 上真编译 ArkTS 宿主（不产出 Dart AOT）。
 # 用法：.\build.ps1 [-Sdk <SDK 根目录>]
-# 不给 -Sdk 时依次看 OHOS_BASE_SDK_HOME、DEVECO_SDK_HOME，最后才是本机默认路径，
-# 这样 CI 上只要把 SDK 摆好并设这两个环境变量之一就能直接跑。
+# 不给 -Sdk 时依次看 OHOS_BASE_SDK_HOME、DEVECO_SDK_HOME，最后才落到仓库里的
+# toolchain\ohos\sdk，这样 CI 上只要把 SDK 摆好并设这两个环境变量之一就能直接跑，
+# 而本机把 SDK 解到仓库的 toolchain 下也不用额外设变量。
 param(
   [string]$Sdk = ''
 )
 
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+
 if (-not $Sdk) {
   if ($env:OHOS_BASE_SDK_HOME) { $Sdk = $env:OHOS_BASE_SDK_HOME }
   elseif ($env:DEVECO_SDK_HOME) { $Sdk = $env:DEVECO_SDK_HOME }
-  else { $Sdk = 'D:\IDE\dsh-bot\toolchain\ohos\sdk' }
+  else { $Sdk = Join-Path $root '..\..\toolchain\ohos\sdk' }
 }
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $root
 try {
   if (-not (Test-Path "$Sdk\26.0.0\ets\oh-uni-package.json")) {
