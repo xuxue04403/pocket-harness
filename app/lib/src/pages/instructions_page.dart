@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../dsh/host_link.dart';
+import '../dsh/instruction_paths.dart';
 
 /// Lists, reads and edits the instruction files the agent inherits.
 ///
@@ -33,6 +34,59 @@ class _InstructionsPageState extends State<InstructionsPage> {
   Future<InstructionsSnapshot> _load() => widget.link.instructions(widget.cwd);
 
   void _reload() => setState(() => _snapshot = _load());
+
+  /// Where a brand-new instruction file would land, or null when nowhere is legal.
+  String? _createDirectory(InstructionsSnapshot snapshot) => instructionCreateDirectory(
+        projectRoot: snapshot.projectRoot,
+        cwd: snapshot.cwd,
+      );
+
+  /// Offers the four names the loader actually reads, then opens a blank editor.
+  Future<void> _create(InstructionsSnapshot snapshot) async {
+    final directory = _createDirectory(snapshot);
+    if (directory == null) return;
+    final name = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text('新建哪种指令文件？'),
+            ),
+            for (final candidate in instructionFileNames)
+              ListTile(
+                title: Text(candidate),
+                subtitle: Text(instructionCandidateHint(candidate)),
+                onTap: () => Navigator.of(context).pop(candidate),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (name == null || !mounted) return;
+    final file = InstructionFile(
+      scope: 'project',
+      label: directory == snapshot.projectRoot ? '.' : directory,
+      path: instructionFilePath(directory, name),
+      name: name,
+      bytes: 0,
+    );
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => InstructionEditorPage(
+          link: widget.link,
+          file: file,
+          initial: '',
+          create: true,
+        ),
+      ),
+    );
+    if (saved == true) _reload();
+  }
 
   Future<void> _edit(InstructionFile file) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -69,6 +123,20 @@ class _InstructionsPageState extends State<InstructionsPage> {
           ),
         ],
       ),
+      floatingActionButton: FutureBuilder<InstructionsSnapshot>(
+        future: _snapshot,
+        builder: (context, state) {
+          final snapshot = state.data;
+          if (snapshot == null || _createDirectory(snapshot) == null) {
+            return const SizedBox.shrink();
+          }
+          return FloatingActionButton.extended(
+            onPressed: () => _create(snapshot),
+            icon: const Icon(Icons.note_add_outlined),
+            label: const Text('新建'),
+          );
+        },
+      ),
       body: FutureBuilder<InstructionsSnapshot>(
         future: _snapshot,
         builder: (context, state) {
@@ -86,12 +154,12 @@ class _InstructionsPageState extends State<InstructionsPage> {
             return _Problem(
               text: snapshot.cwd == null
                   ? '这个会话没有工作目录，也没有用户级指令文件。'
-                  : '这个目录没有 AGENTS.md 一类的指令文件。',
+                  : '这个目录没有 AGENTS.md 一类的指令文件。\n点右下角「新建」可以建一份。',
               onRetry: _reload,
             );
           }
           return ListView(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.only(top: 8, bottom: 88),
             children: [
               _Summary(
                 projectRoot: snapshot.projectRoot,
@@ -193,11 +261,19 @@ class InstructionEditorPage extends StatefulWidget {
     required this.link,
     required this.file,
     required this.initial,
+    this.create = false,
   });
 
   final HostLink link;
   final InstructionFile file;
   final String initial;
+
+  /// True when this edit brings the file into existence.
+  ///
+  /// The Host refuses to write a missing file unless the caller says so, so a
+  /// brand-new editor must set this or the first save fails with "does not exist
+  /// yet" — which reads like a bug to whoever just created it.
+  final bool create;
 
   @override
   State<InstructionEditorPage> createState() => _InstructionEditorPageState();
@@ -223,7 +299,11 @@ class _InstructionEditorPageState extends State<InstructionEditorPage> {
       _error = null;
     });
     try {
-      await widget.link.saveInstruction(widget.file.path, _text.text);
+      await widget.link.saveInstruction(
+        widget.file.path,
+        _text.text,
+        create: widget.create,
+      );
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } on Object catch (error) {

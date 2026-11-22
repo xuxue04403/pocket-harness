@@ -41,11 +41,14 @@ if (!(expiresAt > Date.now())) {
 }
 
 const key = Buffer.from(privateKey, 'base64url')
+// A second argument overrides the LAN endpoints, so an emulator or another
+// machine can reach this host. Comma-separated, `host:port` each.
+const endpoints = process.argv[3]?.split(',') ?? ['127.0.0.1:48100']
 const ticket = createTicket({
   hostDeviceId: deviceId,
   hostPublicKey: x25519PrivateToPublic(key),
   hostName: 'live-harness',
-  lanEndpoints: ['127.0.0.1:48100'],
+  lanEndpoints: endpoints,
   pairingSecret: secret,
   ttlMs: expiresAt - Date.now(),
 })

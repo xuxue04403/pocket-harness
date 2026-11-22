@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:dsh_link/dsh_link.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pocket_harness/src/dsh/host_link.dart';
+import 'package:pocket_harness/src/dsh/instruction_paths.dart';
 import 'package:pocket_harness/src/dsh/outgoing_image.dart';
 import 'package:pocket_harness/src/dsh/questions.dart';
 import 'package:pocket_harness/src/dsh/tool_labels.dart';
@@ -1013,6 +1014,49 @@ void _todoTests() {
       final snapshot = InstructionsSnapshot.fromJson({'files': <Object?>[]});
       expect(snapshot.files, isEmpty);
       expect(snapshot.cwd, isNull);
+    });
+  });
+
+  group('instruction paths', () {
+    test('offers exactly the four names the loader reads', () {
+      expect(instructionFileNames, [
+        'AGENTS.md',
+        'CLAUDE.md',
+        'AGENTS.local.md',
+        'CLAUDE.local.md',
+      ]);
+    });
+
+    test('every offered name has a hint and an unknown name has none', () {
+      for (final name in instructionFileNames) {
+        expect(instructionCandidateHint(name), isNotEmpty, reason: name);
+      }
+      expect(instructionCandidateHint('NOTES.md'), '');
+    });
+
+    test('joins with a backslash and never doubles a trailing separator', () {
+      expect(instructionFilePath(r'D:\work\app', 'AGENTS.md'), r'D:\work\app\AGENTS.md');
+      expect(instructionFilePath(r'D:\work\app\', 'AGENTS.md'), r'D:\work\app\AGENTS.md');
+      expect(instructionFilePath('/home/me', 'AGENTS.md'), '/home/me/AGENTS.md');
+      expect(instructionFilePath('/home/me/', 'AGENTS.md'), '/home/me/AGENTS.md');
+      expect(instructionFilePath('', 'AGENTS.md'), 'AGENTS.md');
+    });
+
+    test('the project root wins over the session directory', () {
+      expect(
+        instructionCreateDirectory(projectRoot: r'D:\work\app', cwd: r'D:\work\app\src'),
+        r'D:\work\app',
+      );
+    });
+
+    test('a session without a project still offers its own directory', () {
+      expect(instructionCreateDirectory(projectRoot: null, cwd: '/tmp/x'), '/tmp/x');
+      expect(instructionCreateDirectory(projectRoot: '', cwd: '/tmp/x'), '/tmp/x');
+    });
+
+    test('nowhere legal means no create button', () {
+      expect(instructionCreateDirectory(projectRoot: null, cwd: null), isNull);
+      expect(instructionCreateDirectory(projectRoot: '', cwd: ''), isNull);
     });
   });
 }
