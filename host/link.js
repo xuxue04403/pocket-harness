@@ -20,6 +20,17 @@ import { SecureChannel } from './secure-channel.js'
 export const HELLO_TIMEOUT_MS = 8_000
 /** How many phone connections one Host serves at once. */
 export const MAX_CONNECTIONS = 8
+/**
+ * How many frames may pile up while a connection is being admitted.
+ *
+ * The queue exists because the client can legitimately start its handshake
+ * before `authorize` has resolved. But `authorize` may await credential I/O,
+ * and the socket keeps delivering meanwhile — without a ceiling one client
+ * could hold an arbitrary amount of memory by feeding frames into that window.
+ * Four is over the real need (the client writes exactly one handshake message)
+ * and far below anything that could hurt.
+ */
+const MAX_QUEUED_FRAMES = 4
 /** Version of the plaintext hello exchange. */
 const HELLO_VERSION = 1
 
@@ -233,6 +244,12 @@ class Link {
       return
     }
     if (this.#admitting) {
+      if (this.#queued.length >= MAX_QUEUED_FRAMES) {
+        // A peer that keeps talking before we have admitted it is not a phone
+        // finishing a handshake; it is something filling memory. Drop it.
+        void this.close()
+        return
+      }
       this.#queued.push(frame)
       return
     }

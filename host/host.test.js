@@ -133,6 +133,52 @@ test('gateway endpoints reach the carrier seam, business ones do not', async () 
   await server.close()
 })
 
+test('a connection that talks during admission is dropped at the queue ceiling', async () => {
+  // `authorize` may await credential I/O, and the socket keeps delivering while
+  // it does. Those frames are queued so a phone's handshake is not dropped — but
+  // an unbounded queue is a memory hole any peer could reach before proving
+  // anything. Four frames is already more than a handshake needs.
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const server = new LinkServer({
+    identity: { deviceId: newDeviceId(), privateKey: Buffer.alloc(32, 9), publicKey: Buffer.alloc(32, 9) },
+    createGateway: () => ({}),
+    authorize: async () => { await gate; return { ok: false, reason: 'not-paired' } },
+    logger: null,
+    hostName: 'Test Host',
+  })
+  let closed = false
+  let frameHandler = () => {}
+  const transport = {
+    onFrame: handler => { frameHandler = handler },
+    onClose: () => {},
+    send: () => {},
+    close: () => { closed = true },
+  }
+  const link = server.attach(transport)
+  assert.ok(link !== null)
+  const hello = encodeFrame(
+    FRAME_KIND.control,
+    Buffer.from(JSON.stringify({
+      v: 1,
+      connection: 'queue-ceiling-probe',
+      client: newDeviceId(),
+      proof: 'not-checked-because-authorize-stalls',
+    }), 'utf8'),
+  )
+  frameHandler(hello)
+  for (let extra = 0; extra < 8; extra += 1) frameHandler(hello)
+  // The assertion has to land while `authorize` is still pending. Waiting for
+  // `link.closed` would prove nothing: the refusal path closes the link anyway,
+  // so the check would pass with no ceiling at all. The hello has to be
+  // well-formed too, or admission never reaches `authorize` and the queue is
+  // never used.
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(closed, true, 'the link should close once the queue is full')
+  release()
+  await server.close()
+})
+
 /** A LinkServer that never accepts anything: these tests only care about binds. */
 function idleServer(port = 0) {
   const server = new LinkServer({
