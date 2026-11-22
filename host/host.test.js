@@ -18,6 +18,7 @@ import { createTicket, decodeTicket, encodeTicket, isTicketValid } from './pairi
 import { NoiseIkResponder, createNoisePrologue, x25519PrivateToPublic } from './noise.js'
 import { open, seal } from './chacha20_poly1305.js'
 import { encodeEnvelope, envelope } from './envelope.js'
+import { LinkServer } from './link.js'
 import { RpcServer } from './rpc.js'
 
 test('credential keys mirror the credentials service rules', () => {
@@ -130,4 +131,51 @@ test('gateway endpoints reach the carrier seam, business ones do not', async () 
   await request('r3', 'session/list', { _request: {} })
   assert.deepEqual(seen.at(-1), ['invoke', 'session', 'list'])
   await server.close()
+})
+
+/** A LinkServer that never accepts anything: these tests only care about binds. */
+function idleServer(port = 0) {
+  const server = new LinkServer({
+    identity: { deviceId: newDeviceId(), privateKey: Buffer.alloc(32, 9), publicKey: Buffer.alloc(32, 9) },
+    createGateway: () => ({}),
+    authorize: () => ({ ok: false, reason: 'not-paired' }),
+    logger: null,
+    hostName: 'Test Host',
+  })
+  return { server, wanted: port }
+}
+
+test('a busy default port moves to a free one instead of serving nobody', async () => {
+  // 48100 is the shipped default. Two Harnesses on one machine, or a leftover
+  // process, must not leave the second plugin listening on nothing while its log
+  // still says it started.
+  const first = idleServer()
+  const taken = await first.server.listen({ port: 0, host: '127.0.0.1' })
+  const second = idleServer()
+  try {
+    const moved = await second.server.listen({ port: taken, host: '127.0.0.1', fallbackToAnyPort: true })
+    assert.notEqual(moved, taken)
+    assert.ok(moved > 0)
+  } finally {
+    await second.server.close()
+    await first.server.close()
+  }
+})
+
+test('an explicitly configured port fails loudly when it is taken', async () => {
+  // The opposite choice, and deliberate: an operator who opened one port in a
+  // firewall wants to hear that the Host cannot have it, not to find the phone
+  // pairing with a port nothing can reach.
+  const first = idleServer()
+  const taken = await first.server.listen({ port: 0, host: '127.0.0.1' })
+  const second = idleServer()
+  try {
+    await assert.rejects(
+      second.server.listen({ port: taken, host: '127.0.0.1' }),
+      error => error.code === 'EADDRINUSE',
+    )
+  } finally {
+    await second.server.close()
+    await first.server.close()
+  }
 })

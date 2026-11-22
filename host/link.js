@@ -86,19 +86,42 @@ export class LinkServer {
    *
    * [host] defaults to all interfaces so a phone on the LAN can reach it; pass
    * `127.0.0.1` to keep the port private to this machine.
+   *
+   * [fallbackToAnyPort] decides what happens when the port is already taken.
+   * With it set, a busy port costs the caller nothing: the kernel hands out a
+   * free one and the pairing code carries the real number, so a phone still
+   * finds this Host. Without it the error is the caller's to handle — which is
+   * what an explicitly configured port should do, because silently moving away
+   * from a port the operator opened in a firewall would look like a broken
+   * install.
    */
-  async listen({ port, host = '0.0.0.0' } = {}) {
+  async listen({ port, host = '0.0.0.0', fallbackToAnyPort = false } = {}) {
     if (this.#server !== null) throw new Error('the link server is already listening')
     const server = net.createServer(socket => this.#accept(socket))
     server.on('error', error => this.#logger?.warn?.(`pocket-harness: link server error (${error.code ?? 'unknown'})`))
-    await new Promise((resolve, reject) => {
-      const onError = error => reject(error)
-      server.once('error', onError)
-      server.listen(port ?? 0, host, () => {
+    const bind = wanted => new Promise((resolve, reject) => {
+      const onError = error => {
+        server.removeListener('listening', onListening)
+        reject(error)
+      }
+      const onListening = () => {
         server.removeListener('error', onError)
         resolve()
-      })
+      }
+      server.once('error', onError)
+      server.once('listening', onListening)
+      server.listen(wanted, host)
     })
+    try {
+      await bind(port ?? 0)
+    } catch (error) {
+      if (error.code !== 'EADDRINUSE' || !fallbackToAnyPort || port === undefined || port === 0) throw error
+      this.#logger?.warn?.(
+        `pocket-harness: port ${port} is already in use, listening on a free port instead `
+        + '(the pairing code always carries the real port)',
+      )
+      await bind(0)
+    }
     this.#server = server
     this.#port = server.address().port
     return this.#port

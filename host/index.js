@@ -69,7 +69,16 @@ export function apply(ctx, config = {}) {
         logger: ctx.logger,
         hostName: config.hostName ?? 'Pocket Harness Host',
       })
-      const port = await server.listen({ port: config.port ?? DEFAULT_PORT, host: config.bindHost ?? '0.0.0.0' })
+      // A profile that never picked a port must still come up when 48100 is
+      // taken, because the alternative is a plugin that silently serves nobody.
+      // An explicitly configured port is honoured strictly: moving away from a
+      // port the operator opened in a firewall would look like a broken install.
+      const wanted = config.port
+      const port = await server.listen({
+        port: wanted ?? DEFAULT_PORT,
+        host: config.bindHost ?? '0.0.0.0',
+        fallbackToAnyPort: wanted === undefined,
+      })
       ctx.logger?.info?.(`pocket-harness: link server listening on port ${port}`)
       dialer = await startRelay(ctx, config, state, server)
       return server
