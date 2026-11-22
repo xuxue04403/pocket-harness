@@ -44,6 +44,18 @@ try {
 
   Get-ChildItem -Recurse -Filter *.hap entry\build |
     Select-Object FullName, Length
+
+  # hvigor 只产出未签名的 HAP，装不上真机也不进 sideload 流程。
+  # 签名交给 tools/ohos-sign.ps1（用 SDK 自带的 OpenHarmony.p12，不需要华为账号）；
+  # 这里只负责调用，签名失败就让整个构建失败 —— 免得拿着未签名的包去装。
+  $unsigned = Get-ChildItem -Recurse -Filter 'entry-default-unsigned.hap' entry\build |
+    Select-Object -First 1
+  if ($unsigned) {
+    $signScript = Join-Path $root '..\ohos-sign.ps1'
+    if (-not (Test-Path $signScript)) { throw "找不到签名脚本：$signScript" }
+    & $signScript -Hap $unsigned.FullName -BundleName 'cn.pocketharness.probe'
+    if ($LASTEXITCODE -ne 0) { throw "签名失败，退出码 $LASTEXITCODE" }
+  }
 }
 finally {
   Pop-Location

@@ -146,7 +146,52 @@ tar.exe -tf entry\build\default\outputs\default\entry-default-unsigned.hap
 # module.json / resources.index / ets/modules.abc / pack.info / rpcid.sc …
 ```
 
-`ets/modules.abc` 里能直接搜到 ArkUI 页面的字符串与 bundleName，说明 ArkTS 真的被编译进了字节码，不是空壳。签名后才能 `hdc install`，签名材料（AGC 证书 + profile）不入库。
+`ets/modules.abc` 里能直接搜到 ArkUI 页面的字符串与 bundleName，说明 ArkTS 真的被编译进了字节码，不是空壳。
+
+## 签名：不用华为账号，SDK 里那套材料就够
+
+`hdc install` 只认签过名的 HAP，而 `hvigor` 在没配 `signingConfigs` 时只会留个警告
+（`Will skip sign 'hap'`）然后吐出未签名产物。DevEco Studio 的自动签名要登录华为账号，
+但 **SDK 的 `toolchains/lib` 里本来就带了一整套可用的签名材料**：
+
+| 文件 | 用途 |
+| --- | --- |
+| `hap-sign-tool.jar` | 签名工具本体（`sign-profile` / `sign-app` / `verify-app`） |
+| `OpenHarmony.p12` | 证书与私钥，口令 `123456` |
+| `OpenHarmonyProfileRelease.pem` | profile 的签名证书链（三级） |
+| `UnsgnedReleasedProfileTemplate.json` | profile 模板（内含一张叶子证书） |
+
+`tools/ohos-sign.ps1` 把这几样拼起来，`tools/ohos-probe/build.ps1` 在 `assembleHap` 之后
+自动调它，所以一次构建就会得到 `entry-default-signed.hap`（1189 KB，校验输出
+`verify: Verify success`）。
+
+### 三个参数必须对上，否则报错会把人带偏
+
+1. `-appCertFile` 要 **叶子证书 + Application CA + Root CA** 的三级链。
+2. `-profileFile` 要 `sign-profile` 签名过的 `.p7b`；给未签名的 `.json` 会报
+   `Profile cert must a cert chain`。
+3. `-keystoreFile` 用原版 `OpenHarmony.p12`，**不要自己重签证书**。
+
+### 踩过的两个坑（报错文案与真正原因无关）
+
+- **`verify certificate chain failed! Signature does not match.`**
+  从 p12 里导出 `openharmony application release` 拼链就会这样 —— 这个条目的
+  **证书链长度是 1（自签）**，issuer 是它自己；而 profile 模板里那张叶子证书的
+  issuer 是 `OpenHarmony Application CA`。两者不是同一张证书，拼在一起当然验不过。
+  （这也顺带解释了另一个发现：p12 里 `openharmony application ca` 与 `cacert`
+  的 SHA-256 都是 `EE:B0:0E:63:…:A9:4D`，但它们是**不同的密钥对**，同名不同物。）
+- **`Illegal base64 character 20`**
+  这条报错跟 base64 一点关系都没有。只要 profile 里的
+  `distribution-certificate` 不是你 `-appCertFile` 里那张叶子证书，sign-app 就会
+  走到这条分支。手写 profile、或者把证书链塞进这个字段，都会触发它。
+
+对应做法只有一条：**profile 直接用模板原文，只替换 `bundle-name` / `developer-id` /
+`not-before` / `not-after` / `uuid` 这几个字段，`distribution-certificate` 的值一个字都不动**；
+而 `-appCertFile` 用模板里那张叶子证书 + SDK 的 CA + Root CA 拼链。这样两边就是同一张证书。
+
+签名材料来自公开 SDK，属于开发期自签，**发布给第三方安装仍需正式证书** ——
+`bundle-info.app-distribution-type` 写的是 `os_integration`，只有打开开发者模式的设备
+才会接受这种包。
 
 ### 中继也在里面
 

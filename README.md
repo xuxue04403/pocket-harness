@@ -54,7 +54,7 @@
 | [`app/`](app) | Flutter 客户端（Android 已通；鸿蒙共用同一套 Dart） |
 | [`packages/dsh_link/`](packages/dsh_link) | 纯 Dart 协议核心：Noise IK、分片、信封、RPC、双传输 |
 | [`packages/dsh_arkts/`](packages/dsh_arkts) | 同一套协议的 TypeScript 版，供鸿蒙 ArkTS 使用；金标向量、真实 Host 与真实中继三条链路均实测通过；另有纯 ArkTS 的二维码解码器 |
-| [`tools/ohos-probe/`](tools/ohos-probe) | 鸿蒙 ArkTS 宿主工程（配对码页、会话列表与新建面板、对话页、审批条、模型面板、技能面板、电脑设置页、工作区文件页、图片选择与历史缩略图、后台任务页、agent 计划面板、从剪贴板粘贴配对码、扫码配对（系统相机拍一张）、二维码金标与相机帧自检），Windows 上可产出未签名 HAP |
+| [`tools/ohos-probe/`](tools/ohos-probe) | 鸿蒙 ArkTS 宿主工程（配对码页、会话列表与新建面板、对话页、审批条、模型面板、技能面板、电脑设置页、工作区文件页、图片选择与历史缩略图、后台任务页、agent 计划面板、从剪贴板粘贴配对码、扫码配对（系统相机拍一张）、二维码金标与相机帧自检），Windows 上可产出已签名 HAP（用 SDK 自带的签名材料，不需要华为账号） |
 | [`host/`](host) | DSH Host 插件，零运行时依赖的 ESM |
 | [`relay/`](relay) | 极简中继，只做房间配对与密文转发 |
 | [`tools/proot-dsh/`](tools/proot-dsh) | 在手机上本机跑 dsh 的安装与自检脚本（PRoot + Alpine + Node 24） |
@@ -152,8 +152,10 @@ cd packages/dsh_arkts; npm run test:live
 ```
 
 鸿蒙侧目前能跑通的界面（扫码配对、会话列表、对话页、审批、模型、技能、设置、文件、任务、计划、
-图片、后台任务）都在探针工程里，用 `tools/ohos-probe/build.ps1` 一键编译出未签名 HAP，
-不需要华为账号。它现在 `1141 KB`，首页那个「解三张二维码金标」按钮会在设备运行时里
+图片、后台任务）都在探针工程里，用 `tools/ohos-probe/build.ps1` 一键编译出**已签名**的 HAP，
+不需要华为账号 —— 签名用的是 OpenHarmony 公开 SDK 自带的那套材料（`hap-sign-tool.jar` +
+`OpenHarmony.p12`），构建结束会自动校验（`verify: Verify success`）。它现在 `1189 KB`，
+首页那个「解三张二维码金标」按钮会在设备运行时里
 把解码器和相机帧路径（行填充、旋转、渐暗）一起走一遍。详见 [docs/harmony-packaging.md](docs/harmony-packaging.md)。
 
 
