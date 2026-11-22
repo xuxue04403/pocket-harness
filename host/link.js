@@ -98,7 +98,9 @@ export class LinkServer {
   async listen({ port, host = '0.0.0.0', fallbackToAnyPort = false } = {}) {
     if (this.#server !== null) throw new Error('the link server is already listening')
     const server = net.createServer(socket => this.#accept(socket))
-    server.on('error', error => this.#logger?.warn?.(`pocket-harness: link server error (${error.code ?? 'unknown'})`))
+    // The permanent error handler is attached only once a bind succeeded: a busy
+    // default port is a handled condition here, and logging it twice (once as a
+    // server error, once as the fallback notice) reads like two separate faults.
     const bind = wanted => new Promise((resolve, reject) => {
       const onError = error => {
         server.removeListener('listening', onListening)
@@ -122,6 +124,7 @@ export class LinkServer {
       )
       await bind(0)
     }
+    server.on('error', error => this.#logger?.warn?.(`pocket-harness: link server error (${error.code ?? 'unknown'})`))
     this.#server = server
     this.#port = server.address().port
     return this.#port
