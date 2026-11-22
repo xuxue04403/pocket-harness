@@ -6,9 +6,17 @@
 // 它会真写文件，但只写一份临时内容再原样写回，最后断言内容回到出发点；如果
 // 中途失败，`finally` 里也会尝试写回，不把用户的指令文件留在半路。
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { connectLive, describeError, type LiveLink } from './live_common'
 import { arrayField, stringField, type JsonObject } from '../src/json'
+import {
+  createDirectory,
+  describeRequest,
+  instructionPath,
+  readInstructions,
+  readInstructionText,
+  writeInstructionRequest,
+} from '../src/instructions'
 
 const failures: string[] = []
 
@@ -169,6 +177,59 @@ async function main(): Promise<void> {
       wrongName = describeError(error as Object)
     }
     ok('a file that is not an instruction file is refused', wrongName.length > 0, wrongName)
+
+    // 新建：手机上的「新建」走的就是这条。落点按 `createDirectory` 的规则挑，
+    // 断言的是「盘上真的多出这个文件」「再 describe 一次它在列表里」「能删掉」。
+    //
+    // 名字用 `AGENTS.local.md` 而不是 `AGENTS.md`：前者是本地覆盖、通常不进版本库，
+    // 在一个 git 检出里留下又删掉它，比动 `AGENTS.md` 风险小。
+    const describedNested = readInstructions(nested)
+    const directory = createDirectory(describedNested.projectRoot, describedNested.cwd)
+    ok('there is a directory to create in', directory.length > 0, directory)
+    if (directory.length > 0) {
+      const created = instructionPath(directory, 'AGENTS.local.md')
+      const alreadyThere = existsSync(created)
+      console.log(`  create target: ${created}${alreadyThere ? ' (already present, skipping)' : ''}`)
+      if (!alreadyThere) {
+        const body = `# live check ${Date.now()}\n`
+        const answer = await link.rpc.call(
+          'pocketInstructions/write', writeInstructionRequest(created, body, true), 20000)
+        ok('creating a missing file with create: true succeeds', answer !== null)
+        ok('the new file is really on the computer', existsSync(created))
+        if (existsSync(created)) {
+          ok('it holds what was sent', readFileSync(created, 'utf8') === body)
+        }
+        // 再问一次：新文件必须出现在列表里，否则界面上的「新建」看起来没生效。
+        const again = await link.rpc.call(
+          'pocketInstructions/describe', describeRequest(directory), 20000)
+        const listedPaths = pathsOf(again)
+        ok('the listing now includes the new file', listedPaths.includes(created),
+          listedPaths.join(', '))
+        // 读得回来，说明它不是一份只有一半的文件。
+        const back = await link.rpc.call(
+          'pocketInstructions/read', { path: created } as JsonObject, 20000)
+        ok('the new file reads back', readInstructionText(back) === body)
+        // 收尾：删掉，别在别人的检出里留垃圾。
+        try {
+          unlinkSync(created)
+          ok('the scratch file was removed', !existsSync(created))
+        } catch (error) {
+          console.log(`  WARNING: could not remove ${created}: ${describeError(error as Object)}`)
+        }
+      }
+      // 不带 create 的写入对不存在的文件必须被拒：默认不悄悄造文件。
+      const missing = instructionPath(directory, 'CLAUDE.local.md')
+      if (!existsSync(missing)) {
+        let refused = ''
+        try {
+          await link.rpc.call(
+            'pocketInstructions/write', writeInstructionRequest(missing, 'nope', false), 20000)
+        } catch (error) {
+          refused = describeError(error as Object)
+        }
+        ok('writing a missing file without create is refused', refused.length > 0, refused)
+      }
+    }
 
     if (failures.length > 0) {
       console.log(`\n${failures.length} CHECK(S) FAILED`)

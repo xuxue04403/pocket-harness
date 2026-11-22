@@ -38,6 +38,7 @@
 | `src/pairing_text.ts` | 从一整行日志里挑出配对码、判真伪、写成一句可核对的话 |
 | `src/jobs.ts` | 后台任务：`job/list` 是不结束的整集流、`follow` 三段式、`kill` 对已结束任务不报错 |
 | `src/todos.ts` | agent 的计划：`todos` 的 `null` 与空数组是两件事，`todo/write` 整表替换 |
+| `src/instructions.ts` | AGENTS 类指令文件：只认四个名字、路径分隔符跟目录风格走、字节数不是 `length` |
 | `src/qr/gf256.ts` | GF(256) 的指数/对数表与多项式运算（本原多项式 `0x11d`） |
 | `src/qr/rs.ts` | Reed-Solomon：生成多项式、syndrome、Berlekamp-Massey + Chien + Forney 纠错 |
 | `src/qr/tables.ts` | 40 个版本 × 4 个纠错等级的分块参数（总码字数、块数、纠错码字数） |
@@ -49,7 +50,7 @@
 
 ## 为什么能信
 
-`npm test` 跑二十二套断言：
+`npm test` 跑二十三套断言：
 
 1. **`test/vectors.ts`** —— 读 `probe/noise-fixture.b64`（来自 ds-harness-remote 的
    MIT 金标向量），把 fixture 的静态密钥、临时密钥、prologue 喂进来，逐字节比对
@@ -132,8 +133,15 @@
     旋转后会被拉长 1/cosθ，不除掉就会把 27 度读成小一号的版本。**RGBA 那条路**
     也在这里验：BT.601 的整数权重（纯红是 76 而不是 85）、行填充必须跳过、
     缓冲区短了要拒绝而不是读越界。
+23. **`test/instructions.ts`** —— 指令文件的纯逻辑：候选名就是那四个（Host 拒绝
+    其他名字，所以手机上也不提供会被拒的选择）；`createDirectory` 项目根优先于
+    会话目录；`instructionPath` 的分隔符**跟着目录自己的风格走**（把 `/home/me`
+    拼成 `/home/me\AGENTS.md` 这种错被这条钉住）；字节数必须真算 UTF-8 ——
+    中文一句是 3 字节而 `text.length` 只有 1，用 `length` 报出来的大小会小一半，
+    代理对是 4 字节；`null` 结论不参与，列表顺序**照抄 Host 给的顺序**（全局链
+    在前、项目链在后），界面自己再排一遍就与 agent 实际加载的顺序不一致了。
 
-`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做十二件事：
+`npm run test:live` 更进一步，它连上**运行中的** DeepSeek Harness 做十三件事：
 
 1. 跑完整 hello → Noise 握手 → `session/list` → `job/list` 流。这一步证明的不只是
    数学正确，而是「这份代码能跟真正的 Host 说话」。
@@ -175,6 +183,10 @@
     必须定位到那个**嵌套检出自己的** `.git`（不能一路跑到外层仓库）；然后真改一份
     项目链里的 `AGENTS.md`、确认盘上的字节真的变了、读回来一致、再写回原样。最后
     确认两个拒绝路径：不在任何 scope 里的目录、以及 `package.json` 这种非候选文件名。
+    然后再走一遍「新建」：按 `createDirectory` 的规则挑落点、用 `create: true`
+    造一份 `AGENTS.local.md`、断言盘上真有这个文件、再 `describe` 一次它出现在
+    列表里、读得回来、最后删掉（不在别人的检出里留垃圾）；顺手钉住「不带 `create`
+    写不存在的文件必须被拒」——默认悄悄造文件是最容易伤到人的那种方便。
     这是「手机改 AGENTS 类文件」唯一的端到端证据，也是唯一会**写**指令文件的脚本
     （所以它只挑项目链、不碰全机器共用的 `~/.dsh/AGENTS.md`）。
 

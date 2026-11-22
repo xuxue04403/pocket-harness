@@ -4,7 +4,7 @@
 // projections 可能缺失、800 多个会话没有分页。每一条都写进断言，因为界面上
 // 出错时最难判断的就是「是数据形状变了还是界面写错了」。
 
-import { filterSessionRows, readSessionRow, readSessionRows, sortSessionRows, UNTITLED_SESSION, type SessionRow } from '../src/session_rows'
+import { cwdOf, filterSessionRows, readSessionRow, readSessionRows, sortSessionRows, UNTITLED_SESSION, type SessionRow } from '../src/session_rows'
 import type { JsonObject } from '../src/json'
 
 const failures: string[] = []
@@ -118,11 +118,29 @@ function checkFilter(): void {
   same('an empty query keeps everything, unlike the skill filter', filterSessionRows(rows, '').length, 3)
 }
 
+function checkCwd(): void {
+  // `detail` 有两种填法：有工作目录时是绝对路径，否则是相对时间。指令页要拿目录
+  // 去问 Host「哪些 AGENTS 类文件生效」，把「3 小时前」当目录传下去，Host 找不到
+  // 项目根，界面上看起来就是「这个项目一份指令文件都没有」。
+  const withDir: SessionRow = { sessionId: 'a', title: 't', detail: 'D:\\IDE\\dsh-bot', running: false, updatedAt: 1 }
+  const posix: SessionRow = { sessionId: 'b', title: 't', detail: '/home/me/app', running: false, updatedAt: 1 }
+  const withTime: SessionRow = { sessionId: 'c', title: 't', detail: '3 小时前', running: false, updatedAt: 1 }
+  const justNow: SessionRow = { sessionId: 'd', title: 't', detail: '刚刚', running: false, updatedAt: 1 }
+  const blank: SessionRow = { sessionId: 'e', title: 't', detail: '', running: false, updatedAt: 1 }
+
+  same('a windows directory is the cwd', cwdOf(withDir), 'D:\\IDE\\dsh-bot')
+  same('a posix directory is the cwd', cwdOf(posix), '/home/me/app')
+  same('a relative time is not a directory', cwdOf(withTime), '')
+  same('"刚刚" is not a directory', cwdOf(justNow), '')
+  same('an empty detail is not a directory', cwdOf(blank), '')
+}
+
 function main(): void {
   console.log('session rows')
   checkRows()
   checkSort()
   checkFilter()
+  checkCwd()
   if (failures.length > 0) {
     console.log(`\n${failures.length} SESSION ROW CHECK(S) FAILED`)
     process.exit(1)

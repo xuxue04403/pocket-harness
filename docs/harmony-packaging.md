@@ -82,7 +82,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1141 KB，内含 `ets/modules.abc` 693,296 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1220 KB，内含 `ets/modules.abc` 776,688 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -124,7 +124,7 @@ npm install --registry=https://repo.harmonyos.com/npm `
 .\build.ps1                      # 也可以用 -Sdk 指定；不给就读 OHOS_BASE_SDK_HOME / DEVECO_SDK_HOME
 ```
 
-产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,141,505 字节）与 `entry-default-signed.hap`（约 1,189,490 字节，`verify: Verify success`）。
+产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,248,976 字节）与 `entry-default-signed.hap`（1,294,506 字节，`verify: Verify success`）。
 
 CI 里的 `harmony` job 走的就是这一条，且是手动触发（`workflow_dispatch`）：它会先检查 `OHOS_BASE_SDK_HOME` / `DEVECO_SDK_HOME` 下有没有摆好的 SDK，没有就把上面第 2 步的布局要求打出来并失败，不会假装构建成功。
 
@@ -437,6 +437,32 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 扫真实数据有个陷阱：这台机器 869 个会话里只有 54 个带计划，扫前 40 个经常一条也遇不到，
 早先的 `live_todos` 因此写成 `sawNull > 0 || sawList > 0`，在「一条都没找到」的情况下仍然
 通过。现在改成两条独立断言（两种形状都必须真的见到），并把扫描上限提到 200。
+
+### 指令文件：手机上能改的最后一类文件
+
+工作区文件接口是**只读**的（只有 stat/list/read/readBytes/search/render/changes），所以
+`AGENTS.md` 这一类「agent 每次请求前都会读」的规则文件在手机上一直只能看。补上的是插件自己的
+命名空间 `pocketInstructions`，三个方法：`describe`（列有什么）、`read`（读一份）、`write`（写一份）。
+
+三处口径必须与电脑上的加载器一致，否则界面会骗人：
+
+- **顺序由 Host 给，界面不许重排**。全局链（`~/.dsh/AGENTS.md`、`~/.agents/AGENTS.md`）在前，
+  项目链从项目根（以 `.git` 为界）一路到会话目录在后，每层基础候选（`AGENTS.md`/`CLAUDE.md`）
+  在前、`.local.md` 覆盖在后。自己按路径排一遍，看到的顺序就和 agent 实际读的顺序不同。
+- **只认四个名字**。放开了这个端点就是通用写文件接口，所以 `package.json` 之类一律
+  `NOT_AN_INSTRUCTION_FILE`。手机上也不提供第五个选项——让人选一个一定会被拒的名字更糟。
+- **写不存在的文件必须显式 `create: true`**，否则 `NOT_FOUND`。所以「新建」是两条路：列表页
+  右上角挑名字 → 带着 `create` 进编辑器。默认悄悄造文件，手滑打错一个目录名就会在别处留一份
+  空指令。
+
+路径分隔符跟着**目录自己的风格**走，不跟手机平台走：这些路径活在电脑上，而那台电脑未必和手机
+同一个系统。第一版无条件用反斜杠，把 `/home/me` 拼成 `/home/me\AGENTS.md`，被
+`test/instructions.ts` 抓住。字节数同理不能拿 `text.length` 充数——中文在 UTF-16 里是 1 个码元、
+在 UTF-8 里是 3 个字节，用 `length` 报出来的大小会小一半。
+
+会话页把工作目录一路带到对话页再带到指令页（`cwdOf(row)`，`detail` 是时间时返回空串）。这一步
+不能省：`detail` 没有工作目录时填的是一句「3 小时前」，把它当目录传给 Host 会让项目根找不到，
+界面上看起来就是「这个项目一份指令文件都没有」。
 
 ### 二维码解码器：自己写一个，因为 SDK 里没有
 

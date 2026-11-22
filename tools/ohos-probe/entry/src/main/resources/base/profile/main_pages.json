@@ -5,6 +5,7 @@
     "pages/Chat",
     "pages/Files",
     "pages/Settings",
-    "pages/Jobs"
+    "pages/Jobs",
+    "pages/Instructions"
   ]
 }

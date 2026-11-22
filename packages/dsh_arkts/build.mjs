@@ -22,6 +22,7 @@ await build({ ...shared, entryPoints: ['test/images.ts'], outfile: 'build/images
 await build({ ...shared, entryPoints: ['test/pairing_text.ts'], outfile: 'build/pairing_text.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/jobs.ts'], outfile: 'build/jobs.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/todos.ts'], outfile: 'build/todos.mjs', platform: 'node', target: 'es2022' })
+await build({ ...shared, entryPoints: ['test/instructions.ts'], outfile: 'build/instructions.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/qr_rs.ts'], outfile: 'build/qr_rs.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/qr_fixtures.ts'], outfile: 'build/qr_fixtures.mjs', platform: 'node', target: 'es2022' })
 await build({ ...shared, entryPoints: ['test/qr_scan.ts'], outfile: 'build/qr_scan.mjs', platform: 'node', target: 'es2022' })

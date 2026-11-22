@@ -43,6 +43,20 @@ export function readSessionRow(value: JsonObject): SessionRow | null {
   return { sessionId, title, detail, running: flagField(value, 'running'), updatedAt }
 }
 
+/**
+ * 这个会话的工作目录，读不出来就是空串。
+ *
+ * `detail` 有两种填法：有工作目录时是那个目录的绝对路径，否则是一句相对时间
+ * （`3 小时前`）。界面要拿目录去问「哪些 AGENTS 类文件生效」，所以这两种情况
+ * 必须分开 —— 把时间当目录传下去只会让 Host 找不到项目根，界面上看起来就像
+ * 「这个项目一份指令文件都没有」。
+ */
+export function cwdOf(row: SessionRow): string {
+  const detail = row.detail
+  if (detail.indexOf('\\') >= 0 || detail.indexOf('/') >= 0) return detail
+  return ''
+}
+
 /** 把 `session/list` 的返回值读成行，跳过所有读不出来的条目。 */
 export function readSessionRows(value: JsonObject): SessionRow[] {
   const rows: SessionRow[] = []

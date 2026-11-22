@@ -16,7 +16,7 @@ import { decodeTicket, type PairingTicket } from '../core/pairing'
 import { HostStore } from '../storage.ohos'
 import { openRelayTransport, openTcpTransport, systemRandom } from '../platform.ohos'
 import { LinkClient, LinkRefusedError } from '../core/client'
-import { readSessionRows, sortSessionRows, filterSessionRows, type SessionRow } from '../core/session_rows'
+import { cwdOf, filterSessionRows, readSessionRows, sortSessionRows, type SessionRow } from '../core/session_rows'
 import {
   createSessionRequest,
   FOLLOW_DESKTOP_PRESET,
@@ -139,7 +139,12 @@ struct Sessions {
       this.newPanel = false
       router.pushUrl({
         url: 'pages/Chat',
-        params: { ticketText: this.ticketText, sessionId: sessionId, title: '新会话' },
+        params: {
+          ticketText: this.ticketText,
+          sessionId: sessionId,
+          title: '新会话',
+          cwd: choice.cwd,
+        },
       })
     } catch (error) {
       this.createError = describeError(error as Object)
@@ -320,7 +325,12 @@ struct Sessions {
             .onClick(() => {
               router.pushUrl({
                 url: 'pages/Chat',
-                params: { ticketText: this.ticketText, sessionId: row.sessionId, title: row.title },
+                params: {
+                  ticketText: this.ticketText,
+                  sessionId: row.sessionId,
+                  title: row.title,
+                  cwd: cwdOf(row),
+                },
               })
             })
           }, (row: SessionRow) => row.sessionId)

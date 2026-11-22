@@ -92,6 +92,8 @@ interface ChatParams {
   readonly ticketText: string
   readonly sessionId: string
   readonly title: string
+  /** 这个会话的工作目录；只用来问「哪些 AGENTS 类指令生效」，缺失无害。 */
+  readonly cwd: string
 }
 
 /** 流式草稿：一次 attempt 还没落定的正文与思考。 */
@@ -178,12 +180,15 @@ struct Chat {
   private ticketText: string = ''
   private sessionId: string = ''
   private title: string = ''
+  /** 工作目录；只用来问「哪些 AGENTS 类指令文件生效」，缺失时指令页仍能列全局链。 */
+  private cwd: string = ''
 
   aboutToAppear(): void {
     const params = router.getParams() as ChatParams
     this.ticketText = params.ticketText
     this.sessionId = params.sessionId
     this.title = params.title
+    this.cwd = params.cwd === undefined || params.cwd === null ? '' : params.cwd
     this.connect()
   }
 
@@ -1044,6 +1049,16 @@ struct Chat {
             router.pushUrl({
               url: 'pages/Jobs',
               params: { ticketText: this.ticketText, sessionId: this.sessionId },
+            })
+          })
+        Text('指令文件')
+          .fontSize(12)
+          .fontColor('#0A7A4F')
+          .decoration({ type: TextDecorationType.Underline, color: '#0A7A4F' })
+          .onClick(() => {
+            router.pushUrl({
+              url: 'pages/Instructions',
+              params: { ticketText: this.ticketText, cwd: this.cwd },
             })
           })
       }
