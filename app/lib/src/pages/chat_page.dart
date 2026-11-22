@@ -9,6 +9,7 @@ import '../dsh/outgoing_image.dart';
 import '../dsh/questions.dart';
 import '../dsh/tool_labels.dart';
 import 'files_page.dart';
+import 'instructions_page.dart';
 import 'jobs_page.dart';
 import 'model_sheet.dart';
 import 'skill_sheet.dart';
@@ -20,11 +21,21 @@ import 'skill_sheet.dart';
 /// requested per frame; the list is small enough that this stays cheap on a
 /// phone, and it avoids a second source of truth for ordering.
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key, required this.link, required this.sessionId, required this.title});
+  const ChatPage({
+    super.key,
+    required this.link,
+    required this.sessionId,
+    required this.title,
+    this.cwd,
+  });
 
   final HostLink link;
   final String sessionId;
   final String title;
+
+  /// The session's working directory, when the caller already knows it. It only
+  /// decides which instruction files are listed, so a missing value is harmless.
+  final String? cwd;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -151,6 +162,22 @@ class _ChatPageState extends State<ChatPage> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => JobsPage(link: widget.link, sessionId: widget.sessionId),
+      ),
+    );
+  }
+
+  /// Opens the instruction files this session's directory inherits.
+  ///
+  /// The list is whatever the Host says exists, so a project without any
+  /// `AGENTS.md` shows an honest empty state rather than a template.
+  Future<void> _openInstructions() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => InstructionsPage(
+          link: widget.link,
+          sessionId: widget.sessionId,
+          cwd: widget.cwd,
+        ),
       ),
     );
   }
@@ -494,6 +521,7 @@ class _ChatPageState extends State<ChatPage> {
             tooltip: '更多',
             onSelected: (value) {
               if (value == 'fork') unawaited(_fork());
+              if (value == 'instructions') unawaited(_openInstructions());
             },
             itemBuilder: (context) => const [
               PopupMenuItem(
@@ -501,6 +529,14 @@ class _ChatPageState extends State<ChatPage> {
                 child: ListTile(
                   leading: Icon(Icons.call_split),
                   title: Text('分支出一个副本'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'instructions',
+                child: ListTile(
+                  leading: Icon(Icons.description_outlined),
+                  title: Text('工作区指令'),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),

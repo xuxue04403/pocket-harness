@@ -950,5 +950,70 @@ void _todoTests() {
       expect(readTodoWrite({'todos': 'nope'}), isEmpty);
     });
   });
+
+  group('instruction files', () {
+    test('reads the project root, the directory and the load order', () {
+      final snapshot = InstructionsSnapshot.fromJson({
+        'projectRoot': '/home/me/project',
+        'cwd': '/home/me/project/packages/app',
+        'files': [
+          {
+            'scope': 'global',
+            'label': '~/.dsh',
+            'path': '/home/me/.dsh/AGENTS.md',
+            'name': 'AGENTS.md',
+            'bytes': 120,
+          },
+          {
+            'scope': 'project',
+            'label': '.',
+            'path': '/home/me/project/AGENTS.md',
+            'name': 'AGENTS.md',
+            'bytes': 400,
+          },
+        ],
+      });
+      expect(snapshot.projectRoot, '/home/me/project');
+      expect(snapshot.files.first.isGlobal, isTrue);
+      expect(snapshot.files.first.label, '~/.dsh');
+      expect(snapshot.files.last.isGlobal, isFalse);
+      expect(snapshot.files.last.bytes, 400);
+    });
+
+    test('a directory outside any project still reports the user chain', () {
+      final snapshot = InstructionsSnapshot.fromJson({
+        'projectRoot': null,
+        'cwd': '/tmp/scratch',
+        'files': [
+          {
+            'scope': 'global',
+            'label': '~/.agents',
+            'path': '/home/me/.agents/AGENTS.md',
+            'name': 'AGENTS.md',
+            'bytes': 8,
+          },
+        ],
+      });
+      expect(snapshot.projectRoot, isNull);
+      expect(snapshot.files.single.label, '~/.agents');
+    });
+
+    test('skips a row without a path or a name instead of inventing one', () {
+      final snapshot = InstructionsSnapshot.fromJson({
+        'files': [
+          {'scope': 'project', 'label': '.'},
+          {'path': 42, 'name': 'AGENTS.md'},
+          {'path': '/p/AGENTS.md', 'name': 'AGENTS.md'},
+        ],
+      });
+      expect(snapshot.files.map((file) => file.path), ['/p/AGENTS.md']);
+    });
+
+    test('an empty listing is not an error', () {
+      final snapshot = InstructionsSnapshot.fromJson({'files': <Object?>[]});
+      expect(snapshot.files, isEmpty);
+      expect(snapshot.cwd, isNull);
+    });
+  });
 }
 

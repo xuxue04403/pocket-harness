@@ -16,6 +16,7 @@
 - **模型**：按会话切换模型与思考强度（含网关模型），也能改电脑的全局默认模型（带 revision 校验，冲突即拒绝）。
 - **图片**：从相册选图随消息发出；历史里的图片按需取回并缓存。
 - **工作区文件**：按目录翻、按名字搜、按行读文本（只读）。
+- **AGENTS 类指令**：在手机上列出 agent 真正会加载的指令文件（`~/.dsh`、`~/.agents` 两个用户级根，以及从项目根（以 `.git` 为界）到会话目录的每一层），直接读、改、写回电脑，下一次请求即生效。只能写 `AGENTS.md`、`CLAUDE.md`、`AGENTS.local.md`、`CLAUDE.local.md` 四个名字，且只能落在已有的指令目录里——工作区文件接口没有写端点，这是补上的那一块。
 - **后台任务**：看会话跑的每条命令、跟随实时输出、远程终止。
 - **待办面板**：贴在对话上方显示 agent 的计划与进度，可折叠。
 - **会话分支**：从当前会话分出一个副本。
@@ -46,6 +47,6 @@
 | 测试面 | 数量 | 命令 |
 |---|---|---|
 | Dart 协议层 | 46 | `cd packages\dsh_link; dart analyze; dart test` |
-| Host 插件与中继 | 13 | `node --test host` |
+| Host 插件与中继 | 30 | `node --test host` |
 | TypeScript 协议层（鸿蒙共用） | 22 套 | `cd packages\dsh_arkts; npm test` |
-| Flutter 客户端 | 122 | `cd app; flutter analyze; flutter test` |
+| Flutter 客户端 | 126 | `cd app; flutter analyze; flutter test` |

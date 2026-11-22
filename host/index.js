@@ -17,6 +17,7 @@ import { networkInterfaces } from 'node:os'
 
 import { credentialKey } from './credentials-key.js'
 import { createTicket, encodeTicket, PAIRING_TICKET_TTL_MS } from './pairing.js'
+import { INSTRUCTIONS_NAMESPACE, serveInstructions } from './instructions.js'
 import { LinkServer, pairingProof } from './link.js'
 import { newDeviceId } from './ids.js'
 import { x25519PrivateToPublic } from './noise.js'
@@ -175,7 +176,12 @@ async function startRelay(ctx, config, state, server) {
 function gatewayFor(ctx, peer) {
   const gateway = ctx.typertGateway
   return {
-    invoke: request => gateway.invoke({ ...request, peer }),
+    invoke: request => {
+      if (request.namespace === INSTRUCTIONS_NAMESPACE) {
+        return Promise.resolve().then(() => serveInstructions(request))
+      }
+      return gateway.invoke({ ...request, peer })
+    },
     stream: request => gateway.stream({ ...request, peer }),
     dispatch: (endpoint, payload, signal) => {
       const dispatchRpc = gateway.dispatchRpc

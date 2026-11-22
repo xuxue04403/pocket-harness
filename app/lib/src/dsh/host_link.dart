@@ -850,6 +850,77 @@ class WorkspaceFileText {
   }
 }
 
+/// One instruction file the agent loads, as the Host reports it.
+class InstructionFile {
+  const InstructionFile({
+    required this.scope,
+    required this.label,
+    required this.path,
+    required this.name,
+    required this.bytes,
+  });
+
+  /// `global` for the user chain, `project` for the workspace chain.
+  final String scope;
+
+  /// Where it sits: `~/.dsh` or a project-relative directory like `packages/app`.
+  final String label;
+
+  /// Absolute path on the computer; this is what read and write take.
+  final String path;
+  final String name;
+  final int bytes;
+
+  /// True for the files loaded from the user's own home rather than a project.
+  bool get isGlobal => scope == 'global';
+
+  static InstructionFile? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final path = value['path'];
+    final name = value['name'];
+    if (path is! String || name is! String) return null;
+    final scope = value['scope'];
+    final label = value['label'];
+    final bytes = value['bytes'];
+    return InstructionFile(
+      scope: scope is String ? scope : 'project',
+      label: label is String ? label : '.',
+      path: path,
+      name: name,
+      bytes: bytes is num ? bytes.toInt() : 0,
+    );
+  }
+}
+
+/// Every instruction file that applies to one session directory.
+class InstructionsSnapshot {
+  const InstructionsSnapshot({
+    required this.projectRoot,
+    required this.cwd,
+    required this.files,
+  });
+
+  /// Null when the directory is not inside a project.
+  final String? projectRoot;
+
+  /// The session directory the listing was computed for, if any.
+  final String? cwd;
+  final List<InstructionFile> files;
+
+  static InstructionsSnapshot fromJson(Map<String, Object?> value) {
+    final root = value['projectRoot'];
+    final cwd = value['cwd'];
+    final files = value['files'];
+    return InstructionsSnapshot(
+      projectRoot: root is String ? root : null,
+      cwd: cwd is String ? cwd : null,
+      files: [
+        if (files is List) for (final file in files) ?InstructionFile.fromJson(file),
+      ],
+    );
+  }
+}
+
 /// One hit from a workspace-wide name search.
 class WorkspaceMatch {
   const WorkspaceMatch({required this.path, required this.type});
@@ -1398,6 +1469,40 @@ class HostLink {
     return [
       if (matches is List) for (final match in matches) ?WorkspaceMatch.fromJson(match),
     ];
+  }
+
+  /// The instruction files the agent will load for a session's directory.
+  ///
+  /// DSH loads `AGENTS.md`-style files from a user-global chain and a project
+  /// chain; the Host plugin answers which ones actually exist, in load order.
+  /// Reading and writing them goes through the same plugin, because the Remote
+  /// API can read workspace files but has no endpoint that writes one.
+  Future<InstructionsSnapshot> instructions(String? cwd) async {
+    final value = await _client.rpc.call('pocketInstructions/describe', {
+      if (cwd != null && cwd.isNotEmpty) 'cwd': cwd,
+    });
+    return InstructionsSnapshot.fromJson(value);
+  }
+
+  /// Reads one instruction file.
+  Future<String> instructionText(String path) async {
+    final value = await _client.rpc.call('pocketInstructions/read', {'path': path});
+    final text = value['text'];
+    return text is String ? text : '';
+  }
+
+  /// Saves one instruction file, creating it only when [create] is set.
+  ///
+  /// The Host refuses any other file name or a directory that is not already an
+  /// instruction scope, so the phone cannot use this to write arbitrary files.
+  Future<int> saveInstruction(String path, String text, {bool create = false}) async {
+    final value = await _client.rpc.call('pocketInstructions/write', {
+      'path': path,
+      'text': text,
+      'create': create,
+    });
+    final bytes = value['bytes'];
+    return bytes is int ? bytes : text.length;
   }
 
   /// The jobs this session can see, as the Host currently reports them.

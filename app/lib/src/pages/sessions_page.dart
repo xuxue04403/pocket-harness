@@ -115,19 +115,20 @@ class _SessionsPageState extends State<SessionsPage> {
     try {
       final id = await link.createSession(cwd: choice.cwd, agentPreset: choice.agentPreset);
       if (!mounted) return;
-      await _open(id, choice.cwd == null ? '新建会话' : _basename(choice.cwd!));
+      await _open(id, choice.cwd == null ? '新建会话' : _basename(choice.cwd!), cwd: choice.cwd);
       _refresh();
     } on Object catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(_describe(error))));
     }
   }
 
-  Future<void> _open(String sessionId, String title) async {
+  Future<void> _open(String sessionId, String title, {String? cwd}) async {
     final link = _link;
     if (link == null) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ChatPage(link: link, sessionId: sessionId, title: title),
+        builder: (_) =>
+            ChatPage(link: link, sessionId: sessionId, title: title, cwd: cwd),
       ),
     );
     // The session list carries activity order and titles, both of which move
@@ -166,7 +167,8 @@ class _SessionsPageState extends State<SessionsPage> {
     if (link == null) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ChatPage(link: link, sessionId: sessionId, title: title),
+          builder: (_) =>
+              ChatPage(link: link, sessionId: sessionId, title: title),
       ),
     );
     if (mounted) _refresh();
@@ -277,7 +279,7 @@ class _SessionsPageState extends State<SessionsPage> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  onTap: () => _open(session.sessionId, session.title),
+                  onTap: () => _open(session.sessionId, session.title, cwd: session.cwd),
                   onLongPress: () => _rename(session),
                 );
               },
