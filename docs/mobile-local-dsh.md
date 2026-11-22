@@ -2,10 +2,12 @@
 
 这是目标里「第二优先：移动端本机运行 dsh」的可行性验证记录。**结论先给**：
 
-- **能跑起来。** 在 Android 15（API 35）x86_64 模拟器上，用 PRoot + Alpine + Node 24 + `@deepseek-ai/dsh@0.2.2-rc.5`，
-  `dsh web` 真的启动了，`GET /?token=…` 换到会话 cookie 后 `GET /` 返回 **200 / 41,184 字节 / `<title>DeepSeek Harness</title>`**。
-- **代价是体积与内存。** 装完 rootfs **2.0 GB**（其中 dsh 自己 1.63 GB），node 常驻 RSS **约 300 MB**。
-- **还没有做成 App 里的按钮。** 这轮只证明机制与参数，客户端接入见下面「接到 App 里还差什么」。
+- **能做进 App，而且已经做进去了。** Android 15（API 35）x86_64 模拟器上，用 PRoot + Alpine +
+  Node 24 + `@deepseek-ai/dsh@0.2.2-rc.5`，App 里点两下就能装、能启动，WebView 里真的渲染出 DSH 页面。
+- **代价是体积与内存。** 装完 rootfs **2.0 GB**（其中 dsh 自己 1.63 GB），node 常驻 RSS **约 300 MB**；
+  `npm i -g` 一次要 **23 分钟**。
+- **差别在于用哪个 proot。** 命令行下能跑的静态版进到应用里必然被 seccomp 打死（退出码 159），
+  只有 Termux 那个**动态版** + 把 loader 放进 `nativeLibraryDir` 才跑得起来，见下面「从 App 里拉起来」。
 
 ## 为什么不是「直接跑 Android 版 node」
 
@@ -14,6 +16,10 @@
 所以必须给它一个真的 Linux userland —— 也就是 PRoot（ptrace 级别的 syscall 重定向，不需要 root、不需要内核模块）。
 
 ## 实测参数（照抄就能复现）
+
+> **这一节是「adb shell 里能不能跑」阶段的记录**，用的是静态 proot 与 `-0`。
+> 这两样在**应用进程**里都不成立（见下一节），复现 App 内的路径请用 `tools/proot-fetch.ps1`
+> 取 Termux 的动态版、并去掉 `-0`。留着这节是因为它把 rootfs 那一侧的坑讲全了。
 
 ```powershell
 # 1. 一个静态 proot（本机从 gh-proxy 取到的是 ELF64 x86_64 静态可执行，1,841,504 字节）
@@ -54,9 +60,10 @@ adb shell "$PROOT /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/us
    ```
    因为 edge 的 node 链接的是更新的 OpenSSL。必须同时
    `apk add --upgrade libssl3 libcrypto3`（同样来自 edge/main），从 3.3.2 升到 3.5.9 才对齐。
-4. **别用 Termux 仓库里那个 `proot` deb 版本。** 它动态链接 `libtalloc.so.2`、`libandroid-shmem.so`，
-   在非 Termux 前缀下要么缺库、要么库路径对不上（我补齐 `libtalloc` 后仍然卡在 `libandroid-shmem`）。
-   静态版 `proot-me/proot` 一次就能跑。
+4. **`proot` 选哪个版本，取决于你从哪儿跑它。** 在 `adb shell` / `su` 域里，Termux 那个动态链接的
+   `proot` deb 确实会因为 `libtalloc.so.2`、`libandroid-shmem.so` 找不到而跑不动，静态版一次就对。
+   **但在应用进程里结论反过来**：静态版被 seccomp 打死（退出码 159、零输出），
+   Termux 的动态版才是唯一能跑的。两边的判断都要看 SELinux 域，详见下一节。
 
 ## dsh 的启动与鉴权（和桌面端完全一样）
 
@@ -84,46 +91,93 @@ dsh web: http://127.0.0.1:8123/?token=<43 字符 base64url>
 | npm 缓存 `/root/.npm` | 318 MB（装完可删） |
 | dsh 进程常驻 RSS | 约 300 MB |
 
-## 接到 App 里还差什么
+## 从 App 里拉起来：做完了，但路上有五道坎
 
-这轮是在 **userdebug 模拟器 + adb shell** 上做的，能证明机制，但没有证明从 Flutter App 里能拉起它。
-剩下三件事，按难度排序：
+这一节记录的是「App 内运行」这一段真正踩到的东西，按被发现的顺序排。
+每一条都是实测证据，不是设计推演。
 
-1. **可执行文件的落点。** Android 10 起禁止从 App 的可写数据目录 `exec`。可行做法是把 `proot` 与 `loader`
-   作为 native lib 打进 APK（`lib/x86_64/libproot.so` 之类），安装后从 `nativeLibraryDir` 执行 ——
-   那里是允许 `exec` 的。这是既有方案（Termux 之外的多个 App）共同的做法。
-2. **rootfs 的分发。** 2 GB 不能塞进 APK。要做成首次启动时下载 + 解压 + 校验（或者提供「自带 rootfs 的 APK」变体）。
-   最省事的组合是 Alpine + npm 装 dsh，实测下载量约 300 MB。
-3. **进程与端口的生命周期。** 目前 `dsh web` 是前台进程，需要 App 侧持有一个服务进程、退出时收掉，
-   并把 token 从 stdout 抓出来交给 WebView 或直接喂给 ArkTS/Dart 客户端。
+### 一、`proot-static` 在应用进程里永远起不来（换成 Termux 的动态版）
 
-## App 里已经做到哪一步
+Alpine 的 `proot-static` 5.4.0 在 `adb shell` 下好好的，进到应用里就死：任何**真正 exec 子进程**
+的调用都返回 **退出码 159**（= 128 + 31，SIGSYS），`stdout` / `stderr` 一个字都没有，耗时只有 2–50 毫秒。
+`--version` 却是 0 —— 说明死点在「proot 开始跟踪子进程」之后、打印任何日志之前。
 
-上面三件事里，第 1 件与第 3 件已经落进代码，第 2 件做到了「能下能续传，但只在模拟器上试过」：
+排查用的是 `MainActivity.kt` 里的 `runSelfTest()`（`adb shell am start -n …/.MainActivity --es selftest 1`，
+日志 tag `PocketSelfTest`），它用与生产完全相同的 `ProcessBuilder`（清空环境）跑八个用例。
+线索在这里：应用进程 `/proc/<pid>/status` 是 `Seccomp: 2`、`Seccomp_filters: 1`（zygote 继承的
+untrusted_app 过滤器），而 `adb shell` / `su` 域是 `Seccomp: 0` —— 所以「命令行下能跑」从不代表「应用里能跑」。
+`logcat`、crash buffer、`dmesg` 里**都没有 SIGSYS 记录**（内核默认不写 audit），只能靠退出码认。
 
-| 位置 | 做什么 |
-| --- | --- |
-| `app/android/app/src/main/jniLibs/<abi>/libproot.so` | 静态 proot（Alpine `proot-static` 5.4.0，arm64-v8a 402,632 字节 / x86_64 268,408 字节），由 `tools/proot-fetch.ps1` 现取，不入库 |
-| `app/android/app/build.gradle.kts` | `packaging { jniLibs { useLegacyPackaging = true } }` —— 否则 AGP 8 把 .so 直接从 APK 映射，目录里没有文件，exec 无从谈起 |
-| `MainActivity.kt` | `MethodChannel('cn.pocketharness/native')` 的 `paths/start/stop/running/killAll` 与一条 `EventChannel` 逐行回输出；`ProcessBuilder` 的环境被清成一个只有 `PATH`、`HOME` 的环境 |
-| `app/lib/src/local/local_commands.dart` | 纯函数：路径布局、proot 命令行、四个安装脚本、token 抓取、续传与空间算术 |
-| `app/lib/src/local/local_runner.dart` | 五步安装（下载 → 解压 → DNS/源 → node → dsh）与启动、停止 |
-| `app/lib/src/pages/local_page.dart` | 进度、失败原文、启动/停止/打开界面 |
+proot-me 官方 v5.5.0 静态版更差（连 `--version` 都 159）。真正能用的是 **Termux 的动态版**
+`proot 5.1.107.102`：它把 loader 放在独立文件里，可以跟 proot 一起塞进 `nativeLibraryDir`
+（Android 10 起唯一允许 `exec` 的位置），于是不再需要往数据目录里落地可执行文件。
+```text
+libproot.so          usr/bin/proot             arm64 259,832 / x86_64 277,144
+libproot-loader.so   usr/libexec/proot/loader  arm64  18,136 / x86_64  18,368
+libtalloc.so         usr/lib/libtalloc.so.2.5.0
+libandroid-shmem.so  usr/lib/libandroid-shmem.so
+```
+`PROOT_LOADER` **必须指 `nativeLibraryDir`**；指到 `files/lib` 就 `execve: Permission denied`。
+`libtalloc.so` 要复制成 `libtalloc.so.2`（`DT_NEEDED` 写的是带版本号的名字），
+`LD_LIBRARY_PATH` 必须同时含那个目录与 `nativeLibraryDir`，否则
+`CANNOT LINK EXECUTABLE … library "libandroid-shmem.so" not found`。
 
-两个新补的、值得单独说的点：
+### 二、`-0`（fake root）让 rootfs 里的符号链接读不出来
 
-- **断点续传**。下载写 `<archive>.part`，下次带着 `Range: bytes=<已有字节>-` 去要；服务端回 206 就 append，
-  回 200（它忽略了 Range）就丢掉半截从头写 —— **拼错的 tar.gz 会在解压时才炸，那时已经过去十分钟**。
-  只有确认字节数够了才 `rename` 到正式文件名。换镜像时保留 `.part`：两个镜像的内容是同一份字节。
-- **装前空间检查**。`df -k <filesDir>` 的可用量不足 2.6 GB 就直接说「只剩 X、需要 Y」，
-  而不是让 `apk` 装到一半 ENOSPC（那个报错藏在它上百行输出里）。toybox 的 `df` **没有 `-m`**，
-  默认单位就是 1024 字节，多给一个 `-m` 会直接报 `Unknown option 'm'`。
+去掉上面那道坎之后，`dsh --version` 仍然报 `/bin/sh: dsh: Permission denied`，
+而 `ls -l` 显示链接、权限位、属主全部正常。对照实验（`su 10160` 跑同一份命令）：
+加不加 `-0` 都能跑，`-0` 时 `id` 是 root、不加时是 `uid=10160`。**差别在 SELinux 域，不在权限位。**
 
-**默认不露出入口**：`kLocalDshEnabled` 是 `bool.fromEnvironment('POCKET_HARNESS_LOCAL_DSH')`，
-beta 包不带这个 define，所以首页没有按钮；要试用得自己
-`flutter build apk --release --dart-define=POCKET_HARNESS_LOCAL_DSH=true`。
-理由是模拟器根本没有出网能力（`ping dl-cdn.alpinelinux.org` 100% 丢包，`ping 10.0.2.2` 正常），
-这条下载路径至今没在能上网的设备上跑过一遍完整的。
+结论：`prootPrelude()` 里**没有 `-0`**。rootfs 的文件本来就属主是应用自己，不需要伪造 root 也能写；
+伪造之后反而在 untrusted_app 域里对链接一律 `Permission denied`。
+
+顺带还有一个绕不开的点：应用进程里那条 **root 属主的符号链接**（`/usr/local/bin/dsh` → `…/lib/bin.js`）
+即使去掉 `-0`、即使删掉重建成 app 属主，仍然读不了。所以装完 dsh 之后要把 npm 留下的链接
+换成一段三行脚本：
+```sh
+#!/bin/sh
+exec node /usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js "$@"
+```
+这不是兜底，是必需步骤。
+
+### 三、`exit` 事件比最后一行输出先到
+
+`node --version && dsh --version` 只回来一行 `v24.22.3`。原因是 `waitFor()` 与 `readLine()`
+在两条线程上，调用方一看到 `exit` 就不再收集。修法：`pump()` 返回 `Thread`，
+`waitFor()` 之后 `outPump.join(2000); errPump.join(2000)` 再发 `exit`。
+改完立刻多出那行 `Permission denied` —— 上一道坎正是这样才浮出来的。
+
+### 四、`dsh web` 的输出在应用里读不到，得改读日志文件
+
+`dsh web --no-open --host 127.0.0.1 --port 8123` 确实起来了（`toybox nc 127.0.0.1 8123` 回
+`HTTP/1.1 401 Unauthorized`），但监听 stdout 的 Dart 代码 90 秒一行都没收到。
+改成把输出重定向进 `/root/dsh.log`、Dart 侧每 500 ms 读一次
+`$rootfsPath/root/dsh.log` 的尾部 8 KB —— 立刻能拿到
+`dsh web: http://127.0.0.1:8123/?token=<43 字符>`。
+
+同一条路上还有一次真实误判：那次失败其实是 **`EADDRINUSE`**（上一次没死透的 `dsh web` 占着 8123）。
+**排查 dsh 起不来要先看 `$rootfsPath/root/.dsh/logs/` 里最新的 `startup-*.log`**，
+那里的原文是 `listen EADDRINUSE: address already in use 127.0.0.1:8123`，比 stdout 有用得多。
+
+### 五、WebView 打不开 `http://127.0.0.1`
+
+`dsh web` 只监听回环、只给 `http://` 地址，而 Android 9 起明文 HTTP 默认被禁，WebView 会白屏。
+`app/android/app/src/main/res/xml/network_security_config.xml` 只对 `127.0.0.1`、`localhost`、
+`10.0.2.2` 开 `cleartextTrafficPermitted="true"`，其余域名照旧禁止。
+
+### 结果
+
+装一次实测：下载 3.4 MB 的 Alpine minirootfs → 解压 → `apk update` → 装 node 24 → `npm i -g`
+671 个包 **23 分钟** → 换成包装脚本。之后点「启动 dsh」，约 60 秒 UI 从「正在启动…」
+变「正在运行」，给出「打开界面」。
+点进去 WebView 真的渲染出 DSH 页面（chromium console 日志里能看到它在
+`http://127.0.0.1:8123/plugins/?…` 上加载四十多个客户端插件）。
+
+**默认仍然不露出入口**：`kLocalDshEnabled` 是
+`bool.fromEnvironment('POCKET_HARNESS_LOCAL_DSH')`，beta 包不带这个 define，所以首页没有按钮；
+要试用得自己 `flutter build apk --release --dart-define=POCKET_HARNESS_LOCAL_DSH=true`。
+原因是首次 1.6 GB 下载只在模拟器上验过（模拟器还得手工
+`ip route add default via 10.0.2.2 dev eth0` 才能出网），真机上的耗时与失败恢复还没跑过。
 
 
 ## 与「远程操控」的关系

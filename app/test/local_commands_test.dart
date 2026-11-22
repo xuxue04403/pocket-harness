@@ -4,7 +4,8 @@ import 'package:pocket_harness/src/local/local_commands.dart';
 void main() {
   const LocalLayout layout = LocalLayout(
     abi: 'x86_64',
-    nativeLibraryDir: '/data/app/~~abc==/cn.pocketharness.pocket_harness-1/lib/x86_64',
+    nativeLibraryDir:
+        '/data/app/~~abc==/cn.pocketharness.pocket_harness-1/lib/x86_64',
     filesDir: '/data/user/0/cn.pocketharness.pocket_harness/files',
   );
 
@@ -51,14 +52,48 @@ void main() {
     test('不支持的 ABI 要明确拒绝，而不是下去一个跑不起来的 rootfs', () {
       expect(() => rootfsUrlFor('armeabi-v7a'), throwsUnsupportedError);
     });
+
+    // 上游 releases 目录里没有裸名 `alpine-minirootfs.tar.gz`：
+    // dl-cdn 回 404，清华回 403（后者看起来像被墙，其实是路径错了）。
+    test('下载地址里的文件名带版本与架构', () {
+      for (final String abi in <String>['x86_64', 'arm64-v8a']) {
+        final String url = rootfsUrlFor(abi);
+        final String arch = abi == 'arm64-v8a' ? 'aarch64' : 'x86_64';
+        expect(
+          url,
+          endsWith('/alpine-minirootfs-$kAlpineVersion-$arch.tar.gz'),
+        );
+        expect(url, contains('/$kAlpineBranch/'));
+        expect(url, isNot(endsWith('/alpine-minirootfs.tar.gz')));
+      }
+    });
+  });
+
+  group('解压', () {
+    // 直接往已有的 rootfs 上重解时，toybox 的 tar 会跟着旧符号链接去写
+    // 安卓自己的 /bin，报 `tar: './bin/chown' /system/bin/busybox not under ...`。
+    test('先解到 .new 再换上去，不覆盖已有目录', () {
+      final String script = extractScript(layout);
+      expect(script, contains('rm -rf ${layout.rootfsPath}.new'));
+      expect(script, contains('-C ${layout.rootfsPath}.new'));
+      expect(
+        script,
+        contains('mv ${layout.rootfsPath}.new ${layout.rootfsPath}'),
+      );
+      final int extractAt = script.indexOf('-xzf');
+      final int moveAt = script.indexOf('mv ');
+      expect(moveAt, greaterThan(extractAt));
+    });
   });
 
   group('proot 命令行', () {
     test('公共参数里有 -r、-0、-w 与三个必需绑定', () {
       final List<String> prelude = prootPrelude(layout);
       expect(prelude.sublist(0, 2), <String>['-r', layout.rootfsPath]);
-      expect(prelude[2], '-0');
-      expect(prelude.sublist(3, 5), <String>['-w', '/root']);
+      expect(prelude.sublist(2, 4), <String>['-w', '/root']);
+      // 不能有 -0：伪造 root 会让 proot 在应用域里对 rootfs 内的
+      // 符号链接回 Permission denied。
+      expect(prelude, isNot(contains('-0')));
       for (final String dir in <String>['/proc', '/dev', '/sys']) {
         final int at = prelude.indexOf(dir);
         expect(at, greaterThan(0));
@@ -71,7 +106,9 @@ void main() {
       final int envAt = argv.indexOf('/usr/bin/env');
       expect(envAt, greaterThan(0));
       expect(argv[envAt + 1], '-i');
-      final String pathEntry = argv.firstWhere((String a) => a.startsWith('PATH='));
+      final String pathEntry = argv.firstWhere(
+        (String a) => a.startsWith('PATH='),
+      );
       expect(pathEntry, 'PATH=${LocalLayout.inRootfsPath}');
       expect(LocalLayout.inRootfsPath.split(':'), contains('/usr/local/bin'));
       expect(LocalLayout.inRootfsPath.split(':'), contains('/bin'));
@@ -93,7 +130,11 @@ void main() {
 
     test('脚本原样作为 sh -c 的最后一个参数', () {
       final List<String> argv = inRootfs(layout, 'apk update');
-      expect(argv.sublist(argv.length - 3), <String>['/bin/sh', '-c', 'apk update']);
+      expect(argv.sublist(argv.length - 3), <String>[
+        '/bin/sh',
+        '-c',
+        'apk update',
+      ]);
     });
   });
 
@@ -112,12 +153,19 @@ void main() {
       expect(script, contains(kNpmRegistry));
       expect(script, contains('@deepseek-ai/dsh@$kDshVersion'));
       expect(script, contains('--no-fund --no-audit'));
+      // 装完必须把 npm 的符号链接换成脚本：应用域里 proot 读不了那个链接。
+      expect(script, contains('/usr/local/bin/dsh'));
+      expect(script, contains(kDshEntry));
+      expect(script.lastIndexOf('dsh --version'), greaterThan(script.indexOf('chmod')));
     });
 
     test('先更新索引再装证书，顺序不能反', () {
       final String script = updatePackagesScript();
       expect(script.indexOf('apk update'), 0);
-      expect(script.indexOf('ca-certificates'), greaterThan(script.indexOf('apk update')));
+      expect(
+        script.indexOf('ca-certificates'),
+        greaterThan(script.indexOf('apk update')),
+      );
     });
 
     test('resolv.conf 里必须有 nameserver，否则 apk 只会说 temporary error', () {
@@ -128,10 +176,13 @@ void main() {
   group('启动与停止', () {
     test('启动命令带 --no-open 与端口，并且 exec 掉 shell', () {
       final String script = startDshScript();
-      expect(script, startsWith('exec dsh web'));
+      expect(script, contains('exec dsh web'));
       expect(script, contains('--no-open'));
       expect(script, contains('--host 127.0.0.1'));
       expect(script, contains('--port $kDefaultPort'));
+      // 输出必须重定向进日志：应用里那条管道读不到东西。
+      expect(script, contains('> $kDshLog'));
+      expect(script, contains('2>&1'));
     });
 
     test('端口可以换', () {
@@ -146,8 +197,12 @@ void main() {
 
   group('从输出里抓 token 地址', () {
     test('抓得到实测的启动行', () {
-      const String line = 'dsh web: http://127.0.0.1:8123/?token=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd';
-      expect(tokenUrlOf(line), 'http://127.0.0.1:8123/?token=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd');
+      const String line =
+          'dsh web: http://127.0.0.1:8123/?token=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd';
+      expect(
+        tokenUrlOf(line),
+        'http://127.0.0.1:8123/?token=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd',
+      );
     });
 
     test('没有 token 的地址不算（打开会 401）', () {
@@ -155,7 +210,8 @@ void main() {
     });
 
     test('同一行有多个地址时挑带 token 的那个', () {
-      const String line = 'open https://example.com/docs or http://127.0.0.1:8123/?token=xyz';
+      const String line =
+          'open https://example.com/docs or http://127.0.0.1:8123/?token=xyz';
       expect(tokenUrlOf(line), 'http://127.0.0.1:8123/?token=xyz');
     });
 
@@ -172,7 +228,10 @@ void main() {
 
   group('续传', () {
     test('.part 就在正式文件后面加后缀', () {
-      expect(partPathOf('/data/files/alpine.tar.gz'), '/data/files/alpine.tar.gz.part');
+      expect(
+        partPathOf('/data/files/alpine.tar.gz'),
+        '/data/files/alpine.tar.gz.part',
+      );
     });
 
     test('一个字节都没有就不算续传', () {
@@ -203,13 +262,19 @@ void main() {
 
   group('可用空间', () {
     test('解析 toybox df 的 1K 块（没有 -m，默认就是 1024 字节）', () {
-      const String output = 'Filesystem       1K-blocks    Used Available Use% Mounted on\n'
+      const String output =
+          'Filesystem       1K-blocks    Used Available Use% Mounted on\n'
           '/dev/block/dm-43   6082144 2065944   4016200  34% /mnt/pass_through/0/emulated\n';
       expect(freeBytesFromDf(output), 4016200 * 1024);
     });
 
     test('表头行解析不出数字，会跳过', () {
-      expect(freeBytesFromDf('Filesystem 1K-blocks Used Available Use% Mounted on\n'), isNull);
+      expect(
+        freeBytesFromDf(
+          'Filesystem 1K-blocks Used Available Use% Mounted on\n',
+        ),
+        isNull,
+      );
     });
 
     test('空输出返回 null，不抛', () {
@@ -217,17 +282,24 @@ void main() {
     });
 
     test('设备名折行时从后往前找，取到最后那条数据行', () {
-      const String output = 'Filesystem 1K-blocks Used Available Use% Mounted on\n'
+      const String output =
+          'Filesystem 1K-blocks Used Available Use% Mounted on\n'
           '-128G  100 200 300 40% /data\n';
       expect(freeBytesFromDf(output), 300 * 1024);
     });
 
     test('够了不说话', () {
-      expect(describeSpaceShortfall(3000 * 1024 * 1024, 2600 * 1024 * 1024), isNull);
+      expect(
+        describeSpaceShortfall(3000 * 1024 * 1024, 2600 * 1024 * 1024),
+        isNull,
+      );
     });
 
     test('不够要说清两个数字', () {
-      final String text = describeSpaceShortfall(1000 * 1024 * 1024, 2600 * 1024 * 1024)!;
+      final String text = describeSpaceShortfall(
+        1000 * 1024 * 1024,
+        2600 * 1024 * 1024,
+      )!;
       // 1000 MB < 1 GB（1024 MB），所以按 MB 说；需求那侧超过 1 GB 按 GB 说。
       expect(text, contains('1000 MB'));
       expect(text, contains('2.5 GB'));
@@ -240,10 +312,17 @@ void main() {
     });
   });
 
-  group('判断「还没装好」', () {    test('缺文件、缺命令、缺包都算没装好', () {
+  group('判断「还没装好」', () {
+    test('缺文件、缺命令、缺包都算没装好', () {
       expect(looksLikeUnprovisioned('sh: dsh: not found'), isTrue);
-      expect(looksLikeUnprovisioned('proot: /bin/sh: No such file or directory'), isTrue);
-      expect(looksLikeUnprovisioned('ERROR: unable to select packages:'), isTrue);
+      expect(
+        looksLikeUnprovisioned('proot: /bin/sh: No such file or directory'),
+        isTrue,
+      );
+      expect(
+        looksLikeUnprovisioned('ERROR: unable to select packages:'),
+        isTrue,
+      );
     });
 
     test('真的坏了不算没装好', () {

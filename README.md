@@ -27,7 +27,7 @@
 |---|---|
 | 配对（扫码 / 粘贴配对码） | ✅ 一次性携带公钥与端点，天然 TOFU |
 | 局域网直连 | ✅ TCP + Noise IK |
-| 在手机上本机跑 dsh | ⏳ 未开启：PRoot + Alpine 已经实证能跑（`dsh web` 返回 200），但 1.6 GB rootfs 的下载与续传还没打磨，beta 默认不露出入口，见 docs/mobile-local-dsh.md |
+| 在手机上本机跑 dsh | ⏳ 未开启：**从 App 里已经跑通**（装 node 24 + dsh、启动、WebView 渲染出 DSH 页面），但首次要下 1.6 GB、装完占 2.0 GB，beta 默认不露出入口，见 docs/mobile-local-dsh.md |
 | 公网中继（自建） | ✅ 双方出站，中继只见密文；配 `relayUrl` + `relayToken` 即启用 |
 | 会话列表、历史、新建会话 | ✅ 新建时可挑智能体预设与工作目录；长按可改名 |
 | 链路保活（心跳） | ✅ 静默断线 10 秒内报错，不会一直转圈 |

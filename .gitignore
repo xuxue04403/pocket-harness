@@ -99,3 +99,9 @@ probe/_tp.sh
 dist/
 # 本地发布凭据：任何情况下都不入库
 probe/_gh_token.txt
+# 手工验证本机 dsh 时的临时脚本与截图（设备侧验证用，不入库）
+probe/_*.sh
+probe/_u.xml
+probe/_web*.png
+probe/_debprobe/
+probe/proot/termux/

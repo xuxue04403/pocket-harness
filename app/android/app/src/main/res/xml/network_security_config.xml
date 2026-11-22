@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  `dsh web` 只监听 127.0.0.1 并打印一个带 token 的 http:// 地址，
+  WebView 要能把这张页面加载出来。Android 9 起明文 HTTP 默认被禁，
+  所以只对回环地址开一个口子 —— 局域网的 TCP 链路不经过 HTTP 栈，
+  不受这里影响。
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

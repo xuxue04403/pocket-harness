@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'local_commands.dart';
@@ -39,7 +40,8 @@ class ProvisionProgress {
 
 /// 装好之后用来启动的入口。端口固定，避免每次换个地址让用户重新记。
 class LocalRunner {
-  LocalRunner({LocalHost? host, this.port = kDefaultPort}) : host = host ?? LocalHost();
+  LocalRunner({LocalHost? host, this.port = kDefaultPort})
+    : host = host ?? LocalHost();
 
   final LocalHost host;
   final String port;
@@ -66,33 +68,56 @@ class LocalRunner {
 
   /// rootfs 里已经有 node 与 dsh 了吗。装过就跳过，重装才会白等十分钟。
   Future<bool> isProvisioned() async {
+    final String output = await probe();
+    // `node --version` 打 `v24.22.3`，`dsh --version` 打 `0.2.2-rc.5`。
+    // 两个都要在 —— 只认一个的话，「node 装好了但 dsh 没装上」会被当成装好了。
+    return output.contains('v2') && output.contains(kDshVersion);
+  }
+
+  /// 探活的原始输出。
+  ///
+  /// 单独留一个方法出来，是因为「装了却显示没装」这种状态最容易卡住人：
+  /// 把 proot 那一行到底吐了什么显示出来，比一个布尔值有用得多。
+  Future<String> probe() async {
     final LocalLayout layout = await this.layout();
-    final String result = await _runCapture(
+    return _runCapture(
       tag: 'probe',
       argv: inRootfs(layout, 'node --version && dsh --version'),
       allowFailure: true,
     );
-    return result.contains('v2') && result.contains(kDshVersion);
   }
 
   /// 完整的安装流程。`onProgress` 会被频繁调用，界面要能承受高频 setState。
   Future<void> provision({void Function(ProvisionProgress)? onProgress}) async {
     final LocalLayout layout = await this.layout();
-    void report(ProvisionStep step, {String detail = '', double? fraction, bool failed = false}) {
-      onProgress?.call(ProvisionProgress(
-        step: step,
-        detail: detail,
-        fraction: fraction,
-        failed: failed,
-      ));
+    void report(
+      ProvisionStep step, {
+      String detail = '',
+      double? fraction,
+      bool failed = false,
+    }) {
+      onProgress?.call(
+        ProvisionProgress(
+          step: step,
+          detail: detail,
+          fraction: fraction,
+          failed: failed,
+        ),
+      );
     }
 
     // 0. 空间。装完 2.0 GB，门槛 2.6 GB。放在最前面，否则装到一半才 ENOSPC，
     //    而那时的报错藏在 apk 的上百行输出里，看不出是磁盘问题。
+    //    只在下装得下才算账：rootfs 已在盘上时这 2 GB 是既有安排，不该
+    //    因为「剩余不足 2.6 GB」而拒绝一次只是补装 node/dsh 的修复。
     report(ProvisionStep.download, detail: '检查可用空间');
+    final bool haveRootfs = await Directory(layout.rootfsPath).exists();
     final int? free = await _freeBytes(layout);
-    if (free != null) {
-      final String? shortfall = describeSpaceShortfall(free, LocalLayout.requiredFreeBytes);
+    if (free != null && !haveRootfs) {
+      final String? shortfall = describeSpaceShortfall(
+        free,
+        LocalLayout.requiredFreeBytes,
+      );
       if (shortfall != null) {
         throw LocalDshError(shortfall);
       }
@@ -103,24 +128,34 @@ class LocalRunner {
     final File archive = File(layout.archivePath);
     final int have = await archive.exists() ? await archive.length() : 0;
     if (have < 1000 * 1000) {
-      report(ProvisionStep.download, detail: '连接镜像');
-      await _download(layout, archive, onProgress: (int got, int total) {
-        report(
-          ProvisionStep.download,
-          detail: '${_mb(got)} / ${_mb(total)}',
-          fraction: total > 0 ? got / total : null,
-        );
-      });
+      await _download(
+        layout,
+        archive,
+        onProgress: (int got, int total) {
+          report(
+            ProvisionStep.download,
+            detail: '${_mb(got)} / ${_mb(total)}',
+            fraction: total > 0 ? got / total : null,
+          );
+        },
+        // 每次尝试都写进界面：卡住的时候，屏幕上那一行就是唯一的线索。
+        // 曾经这里只说「连接镜像」，结果连不上时界面和真在下载一模一样。
+        onDetail: (String detail) {
+          report(ProvisionStep.download, detail: detail);
+        },
+      );
     }
 
     // 2. 解压。用系统自带的 toybox tar，不自己在 Dart 里解 ——
     //    Alpine 的 rootfs 里全是符号链接（`/bin/sh -> /bin/busybox`），
     //    Dart 的 archive 包解符号链接的行为在不同版本之间变过。
+    //    解到 `<rootfs>.new` 再整体换上去：直接往已有的 rootfs 上重解，
+    //    tar 会顺着旧的绝对符号链接去写安卓自己的 /bin，报一整屏
+    //    `not under '.../dsh-root'`。
     report(ProvisionStep.extract, detail: '解开 ${_mb(await archive.length())}');
-    await Directory(layout.rootfsPath).create(recursive: true);
     await _runToEnd(
       tag: 'extract',
-      argv: <String>['/system/bin/tar', '-xzf', layout.archivePath, '-C', layout.rootfsPath],
+      argv: <String>['/system/bin/sh', '-c', extractScript(layout)],
       cwd: layout.filesDir,
     );
 
@@ -162,34 +197,72 @@ class LocalRunner {
 
   /// 启动 `dsh web`。返回它打印出来的带 token 的地址。
   ///
+  /// **不看管道，读日志文件**。`dsh web` 把地址打到 stdout，但在应用里那条管道
+  /// 90 秒一行都读不到（同一份命令手工跑、用 `> /root/dsh.log` 时 30 秒内就写好了），
+  /// 所以 `startDshScript()` 已经把输出重定向进 `kDshLog`，这里每 500 ms 读一次。
+  ///
   /// 超时 90 秒：实测冷启动 8 秒，加上 proot 首次建立映射，给足余量。
   Future<String> start({Duration timeout = const Duration(seconds: 90)}) async {
     final LocalLayout layout = await this.layout();
-    final Completer<String> ready = Completer<String>();
-    late StreamSubscription<LocalLine> sub;
-    sub = host.lines.listen((LocalLine line) {
-      final String? found = tokenUrlOf(line.line);
-      if (found != null && !ready.isCompleted) {
-        ready.complete(found);
+    final String logPath = '${layout.rootfsPath}$kDshLog';
+    await host.start(
+      tag: 'dsh',
+      argv: inRootfs(layout, startDshScript(port: port)),
+      cwd: layout.rootfsPath,
+    );
+    final DateTime deadline = DateTime.now().add(timeout);
+    String transcript = '';
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final String text = await _readLog(logPath);
+      if (text.isNotEmpty) {
+        transcript = text;
+        final String? found = tokenUrlOf(text);
+        if (found != null) {
+          url = found;
+          return found;
+        }
       }
-      if (line.kind == 'exit' && !ready.isCompleted) {
-        ready.completeError(LocalDshError('dsh 启动后立刻退出了（退出码 ${line.code}）。'));
-      }
-    });
-    try {
-      await host.start(
-        tag: 'dsh',
-        argv: inRootfs(layout, startDshScript(port: port)),
-        cwd: layout.rootfsPath,
-      );
-      final String found = await ready.future.timeout(timeout, onTimeout: () {
-        throw LocalDshError('dsh 在 ${timeout.inSeconds} 秒内没有打印出带 token 的地址。');
-      });
-      url = found;
-      return found;
-    } finally {
-      await sub.cancel();
     }
+    await host.stop('dsh');
+    final String tail = transcript.trim();
+    throw LocalDshError(
+      'dsh 在 ${timeout.inSeconds} 秒内没有写出带 token 的地址。'
+      '${tail.isEmpty ? '' : '\n${_tail(tail)}'}',
+    );
+  }
+
+  /// 日志可能不存在（还没写）、也可能很大（node 报错栈）。只读尾部 8 KB。
+  ///
+  /// 这是宿主路径不是 rootfs 内路径：proot 的 `/root/dsh.log` 就落在
+  /// `$rootfsPath/root/dsh.log`，Dart 直接读就行，不用再进一次 proot。
+  Future<String> _readLog(String path) async {
+    final File file = File(path);
+    if (!await file.exists()) {
+      return '';
+    }
+    final int length = await file.length();
+    if (length == 0) {
+      return '';
+    }
+    const int window = 8192;
+    final int from = length > window ? length - window : 0;
+    final RandomAccessFile handle = await file.open();
+    try {
+      await handle.setPosition(from);
+      final List<int> bytes = await handle.read(length - from);
+      return utf8.decode(bytes, allowMalformed: true);
+    } finally {
+      await handle.close();
+    }
+  }
+
+  String _tail(String text) {
+    const int limit = 600;
+    if (text.length <= limit) {
+      return text;
+    }
+    return '…${text.substring(text.length - limit)}';
   }
 
   Future<void> stop() async {
@@ -220,9 +293,11 @@ class LocalRunner {
   /// Alpine minirootfs，字节级一致；从零重下 1.6 GB 才是最坏的选择。
   Future<void> _download(
     LocalLayout layout,
-    File target,
-    {required void Function(int, int) onProgress}
-  ) async {
+    File target, {
+    required void Function(int, int) onProgress,
+    void Function(String)? onDetail,
+  }) async {
+    void detail(String text) => onDetail?.call(text);
     Object? lastError;
     for (int variant = 0; variant < 2; variant += 1) {
       final String url = rootfsUrlFor(layout.abi, variant: variant);
@@ -231,13 +306,28 @@ class LocalRunner {
         await target.parent.create(recursive: true);
         final HttpClient client = HttpClient();
         client.connectionTimeout = const Duration(seconds: 20);
+        // `connectionTimeout` 只管「握手多久放弃」，`await for` 之后的空闲
+        // 读取它一概不管。所以要自己给整体加一道闸：连不上时不能无限期停在
+        // 「连接镜像」上，那和正在下载看起来一模一样。
         try {
           final int already = await temp.exists() ? await temp.length() : 0;
-          final HttpClientRequest request = await client.getUrl(Uri.parse(url));
+          detail(
+            already > 0
+                ? '连接镜像 ${variant + 1}/2（续传 ${_mb(already)}）'
+                : '连接镜像 ${variant + 1}/2',
+          );
+          final HttpClientRequest request = await client
+              .getUrl(Uri.parse(url))
+              .timeout(const Duration(seconds: 40));
           if (already > 0 && shouldResume(already, null)) {
-            request.headers.set(HttpHeaders.rangeHeader, rangeHeaderValue(already));
+            request.headers.set(
+              HttpHeaders.rangeHeader,
+              rangeHeaderValue(already),
+            );
           }
-          final HttpClientResponse response = await request.close();
+          final HttpClientResponse response = await request.close().timeout(
+            const Duration(seconds: 40),
+          );
           // 206 = 服务端答应了续传；200 = 它忽略了 Range，会从头发整份，
           // 这时手里的半截必须丢掉，否则拼出一个坏文件。
           final bool resuming = response.statusCode == 206 && already > 0;
@@ -248,11 +338,14 @@ class LocalRunner {
               ? already + response.contentLength
               : response.contentLength;
           int got = resuming ? already : 0;
+          detail('开始下载 ${_mb(total)}');
           final IOSink sink = temp.openWrite(
             mode: resuming ? FileMode.append : FileMode.write,
           );
           try {
-            await for (final List<int> chunk in response) {
+            // 每读一块就重置一次看门狗：慢速链路正常，完全停住就不正常。
+            const Duration idleLimit = Duration(seconds: 60);
+            await for (final List<int> chunk in response.timeout(idleLimit)) {
               sink.add(chunk);
               got += chunk.length;
               onProgress(got, total);
@@ -271,6 +364,7 @@ class LocalRunner {
         }
       } on Object catch (error) {
         lastError = error;
+        detail('镜像 ${variant + 1} 失败：$error');
       }
     }
     throw LocalDshError('两个镜像都下不下来：$lastError');
@@ -301,16 +395,20 @@ class LocalRunner {
     final Completer<void> done = Completer<void>();
     late StreamSubscription<LocalLine> sub;
     final StringBuffer stderr = StringBuffer();
-    sub = host.lines.where((LocalLine line) => line.tag == tag).listen((LocalLine line) {
+    sub = host.lines.where((LocalLine line) => line.tag == tag).listen((
+      LocalLine line,
+    ) {
       if (line.kind == 'exit') {
         if (done.isCompleted) {
           return;
         }
         final int code = line.code ?? 0;
         if (code != 0 && !allowFailure) {
-          done.completeError(LocalDshError(
-            '命令失败（退出码 $code）：${stderr.toString().trim()}',
-          ));
+          done.completeError(
+            LocalDshError(
+              '命令失败（$tag，退出码 $code）：${stderr.toString().trim()}',
+            ),
+          );
         } else {
           done.complete();
         }

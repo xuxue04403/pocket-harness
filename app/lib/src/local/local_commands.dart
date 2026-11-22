@@ -12,9 +12,16 @@ library;
 
 /// Alpine 与 dsh 的版本选择都是实测定下来的，不要随手升。
 const String kAlpineBranch = 'v3.21';
+const String kAlpineVersion = '3.21.0';
+
+/// 下到本地之后的名字。上游的发布文件名里带版本与架构
+/// （`alpine-minirootfs-3.21.0-x86_64.tar.gz`），本地只留一份，用固定名缓存。
 const String kRootfsFile = 'alpine-minirootfs.tar.gz';
 const String kDshVersion = '0.2.2-rc.5';
 const String kDefaultPort = '8123';
+
+/// `dsh web` 启动时写的日志（rootfs 内的路径），里面那一行就是带 token 的地址。
+const String kDshLog = '/root/dsh.log';
 
 /// 本机跑 dsh 这条路还没到能对外发的程度：proot 与解压已经实测通过，
 /// 但首次下载 1.6 GB rootfs 在真机上的进度、断点续传、失败恢复都还没打磨。
@@ -25,20 +32,35 @@ const bool kLocalDshEnabled = bool.fromEnvironment('POCKET_HARNESS_LOCAL_DSH');
 /// Alpine 3.21 自带的 node 是 22，而 dsh 要求 >= 24.9。
 /// 必须从 edge 装，并且同时把 openssl 抬上去，否则 node 起来就报
 /// `OSSL_INDICATOR_get_callback: symbol not found`。
-const String kAlpineMain = 'https://dl-cdn.alpinelinux.org/alpine/$kAlpineBranch/main';
+const String kAlpineMain =
+    'https://dl-cdn.alpinelinux.org/alpine/$kAlpineBranch/main';
 const String kAlpineCommunity =
     'https://dl-cdn.alpinelinux.org/alpine/$kAlpineBranch/community';
-const String kAlpineEdgeMain = 'https://dl-cdn.alpinelinux.org/alpine/edge/main';
+const String kAlpineEdgeMain =
+    'https://dl-cdn.alpinelinux.org/alpine/edge/main';
 const String kAlpineEdgeCommunity =
     'https://dl-cdn.alpinelinux.org/alpine/edge/community';
 
 /// npm 官方源在国内经常几十秒才回第一个字节，换镜像不是可选优化。
 const String kNpmRegistry = 'https://registry.npmmirror.com';
 
+/// npm 12 默认拦截所有 install script（`npm warn install-scripts ... blocked`）。
+/// 这几个包必须允许：dsh-subprocess-local 的 postinstall 生成 spawn helper，
+/// node-pty/koffi 是原生模块，protobufjs 的 postinstall 补生成文件。
+/// 少了它们 dsh 能 `--version`，起服务时会缺模块。
+const String kInstallScripts =
+    '@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs';
+
+/// rootfs 上游的文件名。**必须带版本与架构**：`alpine-minirootfs.tar.gz`
+/// 这种裸名在 releases 目录下并不存在，服务器回 404（清华镜像回 403，
+/// 看起来更像被墙，其实是路径错了）。
+String rootfsFileNameFor(String arch) =>
+    'alpine-minirootfs-$kAlpineVersion-$arch.tar.gz';
+
 /// rootfs 的下载地址。走 Cloudflare 的 CDN，国内实测可用。
 const List<String> kRootfsUrls = <String>[
-  'https://dl-cdn.alpinelinux.org/alpine/$kAlpineBranch/releases/x86_64/$kRootfsFile',
-  'https://mirrors.tuna.tsinghua.edu.cn/alpine/$kAlpineBranch/releases/x86_64/$kRootfsFile',
+  'https://dl-cdn.alpinelinux.org/alpine/$kAlpineBranch/releases/x86_64/alpine-minirootfs-$kAlpineVersion-x86_64.tar.gz',
+  'https://mirrors.tuna.tsinghua.edu.cn/alpine/$kAlpineBranch/releases/x86_64/alpine-minirootfs-$kAlpineVersion-x86_64.tar.gz',
 ];
 
 /// 一个 ABI 对应一份 rootfs 与一份 proot —— 二进制不通用。
@@ -51,9 +73,10 @@ String rootfsUrlFor(String abi, {int variant = 0}) {
     'arm64-v8a' => 'aarch64',
     _ => throw UnsupportedError('这台设备的 CPU 是 $abi，目前只支持 x86_64 与 arm64-v8a。'),
   };
+  final String file = rootfsFileNameFor(arch);
   final List<String> urls = <String>[
-    'https://dl-cdn.alpinelinux.org/alpine/$kAlpineBranch/releases/$arch/$kRootfsFile',
-    'https://mirrors.tuna.tsinghua.edu.cn/alpine/$kAlpineBranch/releases/$arch/$kRootfsFile',
+    'https://dl-cdn.alpinelinux.org/alpine/$kAlpineBranch/releases/$arch/$file',
+    'https://mirrors.tuna.tsinghua.edu.cn/alpine/$kAlpineBranch/releases/$arch/$file',
   ];
   return urls[variant % urls.length];
 }
@@ -86,11 +109,17 @@ class LocalLayout {
       '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 }
 
-/// proot 的公共参数：绑定目录、工作目录、伪造 root。
+/// proot 的公共参数：绑定目录、工作目录。
+///
+/// **不要 `-0`（fake root）**。在 untrusted_app 域里，伪造 uid 0 会让 proot
+/// 对 rootfs 内的符号链接与可执行文件一律回 `Permission denied`：
+/// `ls: /usr/local/bin/dsh: cannot read link: Permission denied`、
+/// `/bin/sh: dsh: Permission denied`，而同一份命令在 adb shell / su 域里
+/// 加不加 `-0` 都正常 —— 差别在 SELinux 域，不在权限位。
+/// rootfs 里的文件本来就属主是应用自己，不需要伪造 root 也能写。
 List<String> prootPrelude(LocalLayout layout) => <String>[
   '-r',
   layout.rootfsPath,
-  '-0',
   '-w',
   '/root',
   '-b',
@@ -126,12 +155,24 @@ String resolvConfBody() => 'nameserver 223.5.5.5\nnameserver 1.1.1.1\n';
 
 /// 准备包管理器：更新索引并装 CA 证书。没证书时 `npm` 的 TLS 会失败，
 /// 而报错只说 `network`，很容易误判成网络不通。
-String updatePackagesScript() => <String>[
-  'apk update',
-  'apk add --no-cache ca-certificates',
+String updatePackagesScript() =>
+    <String>['apk update', 'apk add --no-cache ca-certificates'].join(' && ');
+
+/// 解压 rootfs。
+///
+/// **不能解到已有的目录上**。toybox 的 tar 写文件前会先跟随目标位置已有的
+/// 符号链接，而 Alpine 的 `bin/chown` 是一条指向 `/bin/busybox` 的绝对链接；
+/// 重解一次就会去写安卓自己的 `/bin/busybox`（不存在），报一整屏
+/// `tar: './bin/chown' /system/bin/busybox not under '.../dsh-root'`，
+/// 最后 `tar: had errors`。所以先解到 `<rootfs>.new`，成功了再整体换上去。
+String extractScript(LocalLayout layout) => <String>[
+  'rm -rf ${layout.rootfsPath}.new',
+  'mkdir -p ${layout.rootfsPath}.new',
+  '/system/bin/tar -xzf ${layout.archivePath} -C ${layout.rootfsPath}.new',
+  'rm -rf ${layout.rootfsPath}',
+  'mv ${layout.rootfsPath}.new ${layout.rootfsPath}',
 ].join(' && ');
 
-/// 装 node。两个坑写在这里：
 /// 1. 必须同时从 edge 装 nodejs 与 npm，否则拿到的 node 是 22，dsh 直接拒绝启动。
 /// 2. 必须 `--upgrade libssl3 libcrypto3`，否则 node 报
 ///    `Error relocating node: OSSL_INDICATOR_get_callback: symbol not found`。
@@ -143,17 +184,50 @@ String installNodeScript() => <String>[
   'node --version',
 ].join(' && ');
 
+/// 把 `npm i -g` 留下的 `dsh` 符号链接换成一个小脚本。
+///
+/// **在应用进程里 proot 解析不了这个链接**：`npm` 装出来的是
+/// `dsh -> ../lib/node_modules/@deepseek-ai/dsh/lib/bin.js`，在 untrusted_app
+/// 域下 `readlink` 会被拒（`ls: dsh: cannot read link: Permission denied`，
+/// 紧接着 `/bin/sh: dsh: Permission denied`），而同一份 rootfs 在 `su` 域里
+/// 完全正常 —— 差别在 SELinux 域，属主与权限位都对也没用。
+/// 换成 `exec node <真路径> "$@"` 的脚本后直接可用，所以安装末尾就换掉它。
+const String kDshEntry = '/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js';
+
+String dshWrapperScript() {
+  final String exec = 'exec node $kDshEntry "\$@"';
+  return <String>[
+    'rm -f /usr/local/bin/dsh',
+    "echo '#!/bin/sh' > /usr/local/bin/dsh",
+    "echo '$exec' >> /usr/local/bin/dsh",
+    'chmod 755 /usr/local/bin/dsh',
+  ].join(' && ');
+}
+
 /// 装 dsh。`--no-fund --no-audit` 只是省掉两段没用的网络往返 ——
 /// 这一步要下 673 个包、1.6 GB，任何多余请求都是分钟级。
+///
+/// `--allow-scripts` 不能省：npm 12 默认拦掉所有 install script，被拦的包含
+/// `@deepseek-ai/dsh-subprocess-local`（postinstall 生成 spawn helper）与
+/// `node-pty`（原生模块）——缺了它们 dsh 起来就是个空壳。
 String installDshScript() => <String>[
   'npm config set registry $kNpmRegistry',
+  'npm config set allow-scripts $kInstallScripts --location=user',
   'npm install -g --no-fund --no-audit @deepseek-ai/dsh@$kDshVersion',
+  dshWrapperScript(),
   'dsh --version',
 ].join(' && ');
 
 /// 启动 Web UI。`--no-open` 是必须的：容器里没有浏览器，不加它进程会卡在打开浏览器。
+///
+/// 输出**重定向到文件**而不是走管道。`dsh web` 把带 token 的地址打到 stdout，
+/// 但在应用里这条管道 90 秒都读不到一行（同一份命令手工跑、
+/// 用 `> /root/dsh.log` 时 30 秒内就写出来了），所以别赌管道，
+/// 让它落到文件里再由调用方轮询。
 String startDshScript({String port = kDefaultPort}) =>
-    'exec dsh web --no-open --host 127.0.0.1 --port $port';
+    'rm -f $kDshLog; exec dsh web --no-open --host 127.0.0.1 --port $port'
+    ' > $kDshLog 2>&1';
+
 
 /// 从 `dsh web` 的 stdout 里挑出带 token 的那个地址。
 ///
@@ -213,8 +287,11 @@ String rangeHeaderValue(int downloaded) => 'bytes=$downloaded-';
 int? freeBytesFromDf(String output) {
   final List<String> lines = output.split('\n');
   for (int index = lines.length - 1; index >= 0; index -= 1) {
-    final List<String> fields =
-        lines[index].trim().split(RegExp(r'\s+')).where((String f) => f.isNotEmpty).toList();
+    final List<String> fields = lines[index]
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((String f) => f.isNotEmpty)
+        .toList();
     if (fields.length < 4) {
       continue;
     }

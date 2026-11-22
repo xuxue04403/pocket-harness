@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../local/local_commands.dart';
 import '../local/local_host.dart';
 import '../local/local_runner.dart';
 import 'local_web_page.dart';
@@ -41,9 +42,16 @@ class _LocalPageState extends State<LocalPage> {
       return;
     }
     try {
-      final bool ready = await _runner.isProvisioned();
+      final String output = await _runner.probe();
+      final bool ready =
+          output.contains('v2') && output.contains(kDshVersion);
       if (!mounted) return;
-      setState(() => _installed = ready);
+      setState(() {
+        _installed = ready;
+        // 探活的原始输出留在调试日志里：「装了却显示没装」时，这一行是
+        // 唯一能看出 proot 到底说了什么的地方。
+        debugPrint('本机 dsh 探活：${output.trim().replaceAll('\n', ' / ')}');
+      });
     } on Object catch (error) {
       // 还没装过时这条命令必然失败，这不是错误，只说明要从头装。
       if (!mounted) return;
