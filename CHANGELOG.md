@@ -47,6 +47,6 @@
 | 测试面 | 数量 | 命令 |
 |---|---|---|
 | Dart 协议层 | 46 | `cd packages\dsh_link; dart analyze; dart test` |
-| Host 插件与中继 | 30 | `node --test host` |
+| Host 插件与中继 | 31 | `node --test host` |
 | TypeScript 协议层（鸿蒙共用） | 23 套 | `cd packages\dsh_arkts; npm test` |
 | Flutter 客户端 | 132 | `cd app; flutter analyze; flutter test` |
