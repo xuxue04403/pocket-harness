@@ -824,7 +824,21 @@ class _AttachmentStrip extends StatefulWidget {
   final List<ImageAttachment> images;
 
   /// Bytes survive a scroll away and back, keyed by the durable attachment id.
+  ///
+  /// Bounded on purpose: this cache is static, so without a ceiling every image
+  /// the user ever scrolled past would stay in memory for the life of the app.
+  /// Eviction is oldest-first, and the few rows still on screen keep their bytes
+  /// because they are re-read from the Host only after falling out of the window.
   static final Map<String, Uint8List> _cache = <String, Uint8List>{};
+  static const int _cacheLimit = 12;
+
+  static void _remember(String attachmentId, Uint8List bytes) {
+    _cache.remove(attachmentId);
+    _cache[attachmentId] = bytes;
+    while (_cache.length > _cacheLimit) {
+      _cache.remove(_cache.keys.first);
+    }
+  }
 
   @override
   State<_AttachmentStrip> createState() => _AttachmentStripState();
@@ -839,7 +853,7 @@ class _AttachmentStripState extends State<_AttachmentStrip> {
         _AttachmentStrip._cache[image.attachmentId] != null
             ? Future<Uint8List>.value(_AttachmentStrip._cache[image.attachmentId]!)
             : widget.link.attachment(widget.sessionId, image).then((bytes) {
-                _AttachmentStrip._cache[image.attachmentId] = bytes;
+                _AttachmentStrip._remember(image.attachmentId, bytes);
                 return bytes;
               }),
     ];
