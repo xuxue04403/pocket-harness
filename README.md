@@ -93,7 +93,8 @@ flutter build apk --release --split-per-abi
 > 没有 `key.properties` 时回落到 debug 签名，只为让 `flutter run --release` 能跑，不能分发。
 > 实测过的两条分支：无 key.properties → 构建成功（66.1 MB 单包）；有 key.properties + 自建
 > keystore → `apksigner verify --print-certs` 显示的是 keystore 里的 DN，证明真走了 release 签名。
-> 当前 release 沿用 debug 签名（`android/app/build.gradle.kts` 里 `signingConfig = signingConfigs.getByName("debug")`），只适合自用与测试；要发布到应用商店请换成自己的 keystore。
+> 当前 v0.1.0-beta 的 APK 用项目自建 keystore 签（`CN=Pocket Harness`，指纹见 [CHANGELOG.md](CHANGELOG.md)），
+> 同一 key 的后续版本可覆盖安装。要发布到应用商店请换成自己的 keystore。
 
 ### 3. 配对
 
