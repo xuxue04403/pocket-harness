@@ -189,73 +189,80 @@ export class LinkClient {
       refuse(new Error('the transport closed before the Host answered'))
     })
 
-    const secret = ticket.pairingSecret
-    const hello = {
-      v: LINK_HELLO_VERSION,
-      connection: connectionId,
-      client: identity.deviceId,
-      ...(secret !== null ? { proof: encodeProof(secret, connectionId, identity.deviceId) } : {}),
+    let channel: SecureChannel | null = null
+    // 这一段随时可能失败，而 `connect` 失败后会接着拨下一个地址。走开时留下
+    // 一条半开的连接，每次尝试就占掉 Host 的一个连接名额和手机的一个句柄。
+    try {
+      const secret = ticket.pairingSecret
+      const hello = {
+        v: LINK_HELLO_VERSION,
+        connection: connectionId,
+        client: identity.deviceId,
+        ...(secret !== null ? { proof: encodeProof(secret, connectionId, identity.deviceId) } : {}),
+      }
+      transport.send(encodeFrame({ kind: FRAME_KIND.control, payload: encodeHello(hello) }))
+
+      const reply = await withTimeout(replied, options.timeoutMs, 'the Host did not answer the hello')
+      if (reply.accepted !== true) {
+        throw new LinkRefusedError(typeof reply.reason === 'string' ? reply.reason : 'refused')
+      }
+      if (reply.host !== ticket.hostDeviceId) {
+        throw new Error(`the Host answered as ${String(reply.host)}, not ${ticket.hostDeviceId}`)
+      }
+
+      const session = new NoiseIkSession({
+        role: 'initiator',
+        localPrivateKey: identity.privateKey,
+        localPublicKey: identity.publicKey,
+        remotePublicKey: ticket.hostPublicKey,
+        // prologue 必须与 Host 用同样的三段 id 拼，否则握手认证失败。
+        prologue: createNoisePrologue(connectionId, ticket.hostDeviceId, identity.deviceId),
+        random: options.random,
+      })
+
+      let established: () => void = () => undefined
+      let failHandshake: (error: Error) => void = () => undefined
+      const ready = new Promise<void>((resolve, reject) => {
+        established = resolve
+        failHandshake = reject
+      })
+
+      let rpc: RpcClient | null = null
+      channel = new SecureChannel({
+        transport,
+        session,
+        onEstablished: () => {
+          established()
+        },
+        onMessage: (plaintext) => {
+          rpc?.accept(plaintext)
+        },
+        onClose: () => {
+          rpc?.close()
+        },
+        onError: (error) => {
+          failHandshake(error)
+        },
+      })
+
+      // initiator 先说话，消息一立刻发出；之后在 `onEstablished` 里翻牌子。
+      channel.start()
+      await withTimeout(ready, options.timeoutMs, 'the Noise handshake did not finish')
+      rpc = new RpcClient({ channel })
+      if (options.heartbeat) rpc.startHeartbeat()
+
+      return new LinkClient({
+        transport,
+        channel,
+        rpc,
+        route: options.route,
+        endpoint: options.endpoint,
+      })
+    } catch (error) {
+      if (channel !== null) channel.close()
+      else transport.close()
+      throw error
     }
-    transport.send(encodeFrame({ kind: FRAME_KIND.control, payload: encodeHello(hello) }))
-
-    const reply = await withTimeout(replied, options.timeoutMs, 'the Host did not answer the hello')
-    if (reply.accepted !== true) {
-      transport.close()
-      throw new LinkRefusedError(typeof reply.reason === 'string' ? reply.reason : 'refused')
-    }
-    if (reply.host !== ticket.hostDeviceId) {
-      transport.close()
-      throw new Error(`the Host answered as ${String(reply.host)}, not ${ticket.hostDeviceId}`)
-    }
-
-    const session = new NoiseIkSession({
-      role: 'initiator',
-      localPrivateKey: identity.privateKey,
-      localPublicKey: identity.publicKey,
-      remotePublicKey: ticket.hostPublicKey,
-      // prologue 必须与 Host 用同样的三段 id 拼，否则握手认证失败。
-      prologue: createNoisePrologue(connectionId, ticket.hostDeviceId, identity.deviceId),
-      random: options.random,
-    })
-
-    let established: () => void = () => undefined
-    let failHandshake: (error: Error) => void = () => undefined
-    const ready = new Promise<void>((resolve, reject) => {
-      established = resolve
-      failHandshake = reject
-    })
-
-    let rpc: RpcClient | null = null
-    const channel = new SecureChannel({
-      transport,
-      session,
-      onEstablished: () => {
-        established()
-      },
-      onMessage: (plaintext) => {
-        rpc?.accept(plaintext)
-      },
-      onClose: () => {
-        rpc?.close()
-      },
-      onError: (error) => {
-        failHandshake(error)
-      },
-    })
-
-    // initiator 先说话，消息一立刻发出；之后在 `onEstablished` 里翻牌子。
-    channel.start()
-    await withTimeout(ready, options.timeoutMs, 'the Noise handshake did not finish')
-    rpc = new RpcClient({ channel })
-    if (options.heartbeat) rpc.startHeartbeat()
-
-    return new LinkClient({
-      transport,
-      channel,
-      rpc,
-      route: options.route,
-      endpoint: options.endpoint,
-    })
   }
 
   /** 打开一条流式端点；宿主在回应 streamId 之后会马上推帧。 */

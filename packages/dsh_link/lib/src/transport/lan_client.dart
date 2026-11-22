@@ -186,32 +186,39 @@ class LinkClient {
     required String endpoint,
     required bool heartbeat,
   }) async {
-    // The hello answer races the transport failure; whichever lands first wins.
-    final answer = transport.incoming.first.timeout(timeout);
-    transport.send(
-      Frame(FrameKind.control, jsonBytes(_hello(connectionId, identity, ticket))).encode(),
-    );
-    final reply = _readControl(await answer);
-    if (reply['accepted'] != true) {
-      await transport.close();
-      throw LinkRefusedError('${reply['reason'] ?? 'refused'}');
-    }
-    if (reply['host'] != ticket.hostDeviceId) {
-      await transport.close();
-      throw StateError('the Host answered as ${reply['host']}, not ${ticket.hostDeviceId}');
-    }
+    // Everything here can fail, and [connect] then goes on to dial the next
+    // address. A socket left half-open on the way out would hold a Host slot and
+    // a phone file descriptor per attempt, so any failure closes the pipe first.
+    SecureChannel? channel;
+    try {
+      // The hello answer races the transport failure; whichever lands first wins.
+      final answer = transport.incoming.first.timeout(timeout);
+      transport.send(
+        Frame(FrameKind.control, jsonBytes(_hello(connectionId, identity, ticket))).encode(),
+      );
+      final reply = _readControl(await answer);
+      if (reply['accepted'] != true) {
+        throw LinkRefusedError('${reply['reason'] ?? 'refused'}');
+      }
+      if (reply['host'] != ticket.hostDeviceId) {
+        throw StateError('the Host answered as ${reply['host']}, not ${ticket.hostDeviceId}');
+      }
 
-    final session = NoiseIkSession(
-      role: NoiseRole.initiator,
-      localPrivateKey: identity.privateKey,
-      localPublicKey: identity.publicKey,
-      remotePublicKey: ticket.hostPublicKey,
-      prologue: createNoisePrologue(connectionId, ticket.hostDeviceId, identity.deviceId),
-    );
-    final channel = SecureChannel(transport: transport, session: session);
-    // The initiator speaks first, so message one goes out immediately.
-    unawaited(channel.handshake().catchError((Object _) {}));
-    await channel.ready.timeout(timeout);
+      final session = NoiseIkSession(
+        role: NoiseRole.initiator,
+        localPrivateKey: identity.privateKey,
+        localPublicKey: identity.publicKey,
+        remotePublicKey: ticket.hostPublicKey,
+        prologue: createNoisePrologue(connectionId, ticket.hostDeviceId, identity.deviceId),
+      );
+      channel = SecureChannel(transport: transport, session: session);
+      // The initiator speaks first, so message one goes out immediately.
+      unawaited(channel.handshake().catchError((Object _) {}));
+      await channel.ready.timeout(timeout);
+    } catch (_) {
+      await (channel?.close() ?? transport.close());
+      rethrow;
+    }
     final rpc = RpcClient(channel);
     // A phone holds a link open across screen locks and idle stretches, which is
     // exactly when a relay or a NAT drops the route without telling either end.

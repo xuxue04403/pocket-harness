@@ -106,6 +106,14 @@ interface HostOptions {
   /** 收下 hello 但不回任何东西，用来验证超时。 */
   readonly silent?: boolean
   /**
+   * 收下 hello 并回 `accepted`，之后不再说任何话。
+   *
+   * 真机上这对应"配对过了、但 Noise 握手没走完"（Host 侧创建 Peer 失败、或者
+   * 中继在两端之间丢了一帧）。手机必须把这条连接关掉再走，否则每次重试都留一条
+   * 半开连接。
+   */
+  readonly keepHandshakeSilent?: boolean
+  /**
    * `$events` 的流开了、但第一帧不是 `ready`。
    *
    * 真机上这对应"Harness 版本旧到没有 remotes 服务"或网关自己出错：手机必须
@@ -151,6 +159,7 @@ class FakeHost {
       return
     }
     this.reply({ v: 1, accepted: true, host: this.hostId, name: 'pipe-host' })
+    if (this.options.keepHandshakeSilent === true) return
 
     const session = new NoiseIkSession({
       role: 'responder',
@@ -357,6 +366,9 @@ async function checkRefusal(): Promise<void> {
     caught instanceof LinkRefusedError && caught.reason === 'bad-proof',
     caught instanceof LinkRefusedError ? caught.reason : '',
   )
+  // `connect` 失败后还会去拨票据里的下一个地址，走开时留下的半开连接会占掉
+  // Host 的连接名额和手机的一个句柄。
+  ok('a refused transport is closed again', f.phonePipe.closed)
 }
 
 async function checkImpersonation(): Promise<void> {
@@ -422,6 +434,24 @@ async function checkHelloTimeout(): Promise<void> {
     caught instanceof Error && caught.message.includes('did not answer the hello'),
     caught instanceof Error ? caught.message : String(caught),
   )
+  ok('a transport that timed out is closed again', f.phonePipe.closed)
+}
+
+async function checkHalfHandshakeIsClosed(): Promise<void> {
+  // hello 通过、Noise 却不往下走：Host 收下后什么都不再发。
+  const f = fixture({ keepHandshakeSilent: true })
+  let caught: Object | null = null
+  try {
+    await LinkClient.connect({ ...connectOptions(f), timeoutMs: 400 })
+  } catch (error) {
+    caught = error
+  }
+  ok(
+    'a Noise handshake that stalls fails the connect',
+    caught instanceof Error && caught.message.includes('Noise handshake'),
+    caught instanceof Error ? caught.message : String(caught),
+  )
+  ok('a transport that stalled mid-handshake is closed again', f.phonePipe.closed)
 }
 
 async function checkRelayRoute(): Promise<void> {
@@ -545,6 +575,7 @@ async function main(): Promise<void> {
   await checkErrorPropagation()
   await checkStream()
   await checkHelloTimeout()
+  await checkHalfHandshakeIsClosed()
   await checkRelayRoute()
   await checkRemoteEvents()
   await checkFailedEventStreamIsClosed()
