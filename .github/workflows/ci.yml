@@ -4,9 +4,11 @@ name: ci
 # no local toolchain still proves the three layers: the Dart protocol core, the
 # Host plugin, and the Flutter client.
 #
-# The HarmonyOS job is intentionally separate and manual: `flutter build hap`
-# needs a macOS arm64 host plus Huawei-signed command line tools, neither of
-# which this repository can provision. See docs/harmony-packaging.md.
+# The HarmonyOS client is ArkTS, not Flutter: `tools/ohos-probe/` builds it with
+# the public OpenHarmony 7.0 SDK plus hvigor from repo.harmonyos.com, which needs
+# neither a Huawei account nor a macOS host (docs/harmony-packaging.md records the
+# six errors that layout has to satisfy). That build still wants a ~3 GB SDK
+# download, so it stays a manual job rather than running on every push.
 
 on:
   push:
@@ -95,12 +97,40 @@ jobs:
   harmony:
     name: HarmonyOS HAP (manual)
     if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-14
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Explain the missing toolchain
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check for a usable SDK
+        shell: pwsh
         run: |
-          echo "HarmonyOS packaging needs the oh-flutter 3.47.9-ohos SDK and"
-          echo "Huawei-signed hvigor/ohpm, which cannot be downloaded without a"
-          echo "Huawei account. See docs/harmony-packaging.md for the exact steps."
+          # build.ps1 要的是 <SDK 根>\26.0.0\{ets,js,native,toolchains,previewer}。
+          # 公开 SDK 有 3 GB，装不进 runner 的缓存，所以这里先看有没有人摆好。
+          $sdk = $env:OHOS_BASE_SDK_HOME
+          if (-not $sdk) { $sdk = $env:DEVECO_SDK_HOME }
+          if ($sdk -and (Test-Path "$sdk\26.0.0\ets\oh-uni-package.json")) {
+            Write-Host "SDK 就绪：$sdk"
+            exit 0
+          }
+          Write-Host '没有 OpenHarmony SDK，这个手动 job 跳过真实构建。'
+          Write-Host '下载（公开，不需要华为账号）：'
+          Write-Host '  https://repo.huaweicloud.com/openharmony/os/7.0-Release/ohos-sdk-windows_linux-public.tar.gz'
+          Write-Host '解出 windows/ 下五个 zip，摆成 <SDK 根>\26.0.0\{ets,js,native,toolchains,previewer}'
+          Write-Host '再设置 OHOS_BASE_SDK_HOME=<SDK 根>，然后重跑这个 job。'
+          Write-Host '本地等价命令见 docs/harmony-packaging.md。'
           exit 1
+      - name: Install hvigor
+        working-directory: tools/ohos-probe
+        shell: pwsh
+        run: npm install --registry=https://repo.harmonyos.com/npm @ohos/hvigor@6.26.20 @ohos/hvigor-ohos-plugin@6.26.20 --no-audit --no-fund
+      - name: Build and sign the HAP
+        working-directory: tools/ohos-probe
+        shell: pwsh
+        run: ./build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-harness-hap
+          path: tools/ohos-probe/entry/build/**/entry-default-signed.hap
+          if-no-files-found: error

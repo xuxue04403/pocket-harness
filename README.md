@@ -161,7 +161,7 @@ cd packages/dsh_arkts; npm run test:live
 
 设计细节见 [docs/superpowers/specs/2026-11-20-pocket-harness-design.md](docs/superpowers/specs/2026-11-20-pocket-harness-design.md)。
 
-CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作业分别跑 Dart 协议层、Host 插件与中继、TypeScript 协议层、Flutter 客户端（含 `flutter build apk --debug`）。鸿蒙打包作业是手动触发，当前只说明缺失的工具链，详见打包文档。
+CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作业分别跑 Dart 协议层、Host 插件与中继、TypeScript 协议层、Flutter 客户端（含 `flutter build apk --debug`）。第五份是鸿蒙打包，**手动触发**：它在 `windows-latest` 上检查有没有摆好的 OpenHarmony SDK，有就真编译并签名、把 HAP 当产物上传，没有就打印 SDK 的布局要求并失败（CI 上不缓存 3 GB SDK，所以没有替它下载）。详见打包文档。
 
 ## 安全
 

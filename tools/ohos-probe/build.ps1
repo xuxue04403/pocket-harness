@@ -1,8 +1,16 @@
 ﻿# 在 Windows 上真编译 ArkTS 宿主（不产出 Dart AOT）。
 # 用法：.\build.ps1 [-Sdk <SDK 根目录>]
+# 不给 -Sdk 时依次看 OHOS_BASE_SDK_HOME、DEVECO_SDK_HOME，最后才是本机默认路径，
+# 这样 CI 上只要把 SDK 摆好并设这两个环境变量之一就能直接跑。
 param(
-  [string]$Sdk = 'D:\IDE\dsh-bot\toolchain\ohos\sdk'
+  [string]$Sdk = ''
 )
+
+if (-not $Sdk) {
+  if ($env:OHOS_BASE_SDK_HOME) { $Sdk = $env:OHOS_BASE_SDK_HOME }
+  elseif ($env:DEVECO_SDK_HOME) { $Sdk = $env:DEVECO_SDK_HOME }
+  else { $Sdk = 'D:\IDE\dsh-bot\toolchain\ohos\sdk' }
+}
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -53,7 +61,7 @@ try {
   if ($unsigned) {
     $signScript = Join-Path $root '..\ohos-sign.ps1'
     if (-not (Test-Path $signScript)) { throw "找不到签名脚本：$signScript" }
-    & $signScript -Hap $unsigned.FullName -BundleName 'cn.pocketharness.probe'
+    & $signScript -Hap $unsigned.FullName -BundleName 'cn.pocketharness.probe' -SdkRoot (Join-Path $Sdk '26.0.0')
     if ($LASTEXITCODE -ne 0) { throw "签名失败，退出码 $LASTEXITCODE" }
   }
 }

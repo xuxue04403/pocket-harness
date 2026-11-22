@@ -13,8 +13,8 @@
 | oh-flutter（Flutter 的鸿蒙分支） | `https://atomgit.com/oh-flutter/flutter_flutter` | 用 `oh-3.47.4-dev` 或更新的 release 分支；**不要**用 `gitee.com/openharmony-sig/flutter_flutter`（停在 3.22） |
 | 鸿蒙插件 fork | `https://atomgit.com/oh-flutter/flutter_packages` | 下面列出的依赖要换成对应的 ohos 版本 |
 | OpenHarmony SDK（API 26） | `https://repo.huaweicloud.com/openharmony/os/7.0-Release/ohos-sdk-windows_linux-public.tar.gz` | 公开下载，约 3.2 GB，免登录 |
-| hvigor / ohpm | HarmonyOS Command Line Tools | 需登录华为账号；`ohpm` 另有免登录的社区版 `ohpm/5.0.2/oh-command-line-tools-20240715.zip` |
-| 签名 | AGC 调试证书 + profile | 未签名的 HAP 装不进华为手机 |
+| hvigor / ohpm | `https://repo.harmonyos.com/npm`（`@ohos/hvigor@6.26.20` + `@ohos/hvigor-ohos-plugin@6.26.20`） | **免登录**，`npm install --registry=https://repo.harmonyos.com/npm` 即可；HarmonyOS Command Line Tools 需要华为账号，本项目不用它 |
+| 签名 | 上述公开 SDK 自带 `toolchains/lib/{hap-sign-tool.jar, OpenHarmony.p12, OpenHarmonyProfileRelease.pem, UnsgnedReleasedProfileTemplate.json}` | **不需要华为账号**，见下文「签名」一节；`tools/ohos-sign.ps1` 已经把它跑通 |
 
 ## 依赖替换
 
@@ -57,8 +57,7 @@ dependency_overrides:
 
 4. **`flutter_secure_storage`**：本项目没有用它，因此不需要它的 fork。
 
-## 构建命令
-
+## 构建命令（Flutter 路线，仅 macOS arm64）
 在 macOS arm64 上：
 
 ```bash
@@ -77,7 +76,7 @@ flutter build hap --release \
 hdc install -r entry-default-signed.hap
 ```
 
-## 在 Windows 上能做的部分（已实测跑通，可产出未签名 HAP）
+## 在 Windows 上能做的部分（已实测跑通，可产出已签名 HAP）
 
 界面层已经是真的了：`tools/ohos-probe` 里有三个页面 —— 配对码页（粘贴 `pocketharness://pair?...`、保存身份）、会话列表页（`session/list`，运行中优先排序）、对话页（`session/follow` 带 `activate` 与 `assistantStream`，逐字增量 + 工具调用 + 异常的 `turn/end` 有一句话）。从配对到收发消息这条链路在 ArkTS 里是完整的，缺的是扫码、图片、设置这些外围页面。
 
@@ -116,15 +115,18 @@ foreach ($c in 'ets','js','native','toolchains','previewer') {
   tar.exe -xf "<解压目录>\windows\$c-windows-x64-26.0.0.38-Beta.zip" -C "$sdk\26.0.0\$c" --strip-components=1
 }
 
-# 3. hvigor（repo.harmonyos.com 无需登录）
+# 3. hvigor（repo.harmonyos.com 无需登录），装在探针工程里
+cd tools\ohos-probe
 npm install --registry=https://repo.harmonyos.com/npm `
   @ohos/hvigor@6.26.20 @ohos/hvigor-ohos-plugin@6.26.20
 
-# 4. 构建
-$env:DEVECO_SDK_HOME = $sdk
-$env:OHOS_BASE_SDK_HOME = $sdk
-node node_modules\@ohos\hvigor\bin\hvigor.js --mode module -p product=default assembleHap --no-daemon
+# 4. 构建 + 签名（build.ps1 会在 assembleHap 之后自动调 tools/ohos-sign.ps1）
+.\build.ps1                      # 也可以用 -Sdk 指定；不给就读 OHOS_BASE_SDK_HOME / DEVECO_SDK_HOME
 ```
+
+产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,141,505 字节）与 `entry-default-signed.hap`（约 1,189,490 字节，`verify: Verify success`）。
+
+CI 里的 `harmony` job 走的就是这一条，且是手动触发（`workflow_dispatch`）：它会先检查 `OHOS_BASE_SDK_HOME` / `DEVECO_SDK_HOME` 下有没有摆好的 SDK，没有就把上面第 2 步的布局要求打出来并失败，不会假装构建成功。
 
 ### 六个必踩的坑（都有原文报错）
 
