@@ -54,6 +54,7 @@ Thumbs.db
 probe/_live-ticket*.txt
 probe/_relay-ticket*.txt
 probe/_ticket.txt
+probe/_t.txt
 
 # 探针日志会captured配对码，不入库
 probe/_*.out
