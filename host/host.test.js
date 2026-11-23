@@ -79,6 +79,30 @@ test('fragments reassemble and refuse to grow past the ceiling', () => {
   assert.deepEqual(Fragment.split(Buffer.alloc(10), 1), [])
 })
 
+test('a message is dropped the moment its pieces exceed the size it declared', () => {
+  // The header is a claim, and it is the only thing bounding what we hold. If we
+  // only compare once the last piece lands, a peer can send `total` pieces of
+  // 48 KiB against a 4 MiB claim and buffer hundreds of megabytes first.
+  const reassembler = new Reassembler()
+  const chunk = Buffer.alloc(48 * 1024, 7)
+  const total = 3000
+  let thrown = null
+  let accepted = 0
+  try {
+    while (accepted < total) {
+      reassembler.accept(new Fragment(7, accepted, total, 4 * 1024 * 1024, chunk))
+      accepted += 1
+    }
+  } catch (error) {
+    thrown = error
+  }
+  assert.ok(thrown !== null, 'the reassembler should stop accepting oversize pieces')
+  assert.match(thrown.message, /exceed the size their header declared/)
+  // Roughly 4 MiB of worth, not 3000 * 48 KiB (140 MB).
+  assert.ok(accepted < 100, `it kept accepting ${accepted} pieces`)
+  assert.equal(reassembler.pending, 0)
+})
+
 test('AEAD rejects a tampered tag', () => {
   const key = Buffer.alloc(32, 1)
   const nonce = Buffer.alloc(12, 2)

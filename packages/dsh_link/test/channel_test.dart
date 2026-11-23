@@ -153,6 +153,35 @@ void main() {
         throwsA(isA<FormatException>()),
       );
     });
+
+    test('drops a message as soon as its pieces exceed the size it declared', () {
+      // totalBytes 是发送方的声明，也是唯一约束我们手里这堆字节的东西。只在收齐时
+      // 比较，对端就能用 total 片各 48 KiB 配上 4 MiB 的声明，先把几百兆缓冲进来。
+      final reassembler = Reassembler();
+      final chunk = Uint8List(maxSealedPayload);
+      const total = 3000;
+      var accepted = 0;
+      expect(
+        () {
+          while (accepted < total) {
+            reassembler.accept(
+              Fragment(
+                messageId: 7,
+                index: accepted,
+                total: total,
+                totalBytes: maxReassembledBytes,
+                payload: chunk,
+              ),
+            );
+            accepted += 1;
+          }
+        },
+        throwsA(isA<FormatException>()),
+      );
+      // 4 MiB / 48 KiB ≈ 86 片，而不是 3000 片。
+      expect(accepted, lessThan(100));
+      expect(reassembler.pending, 0);
+    });
   });
 
   group('Envelope', () {

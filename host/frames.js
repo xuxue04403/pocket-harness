@@ -110,24 +110,32 @@ export class Reassembler {
         const oldest = this.#partials.keys().next().value
         this.#partials.delete(oldest)
       }
-      partial = { total: fragment.total, totalBytes: fragment.totalBytes, pieces: new Map() }
+      partial = { total: fragment.total, totalBytes: fragment.totalBytes, pieces: new Map(), bytes: 0 }
       this.#partials.set(fragment.messageId, partial)
     }
     if (partial.total !== fragment.total || partial.totalBytes !== fragment.totalBytes) {
       throw new Error('fragments of one message disagree about its shape')
     }
+    // Count as we go rather than only at the end. The header's totalBytes is the
+    // sender's claim, and it is the only thing bounding what we hold; checking it
+    // only once the last piece lands lets a peer with `total` pieces of 48 KiB and
+    // a 4 MiB claim buffer hundreds of megabytes first.
+    const previous = partial.pieces.get(fragment.index)
+    partial.bytes += fragment.payload.length - (previous === undefined ? 0 : previous.length)
+    if (partial.bytes > partial.totalBytes) {
+      this.#partials.delete(fragment.messageId)
+      throw new Error('fragments exceed the size their header declared')
+    }
     partial.pieces.set(fragment.index, fragment.payload)
     if (partial.pieces.size !== partial.total) return null
     this.#partials.delete(fragment.messageId)
     const parts = []
-    let received = 0
     for (let index = 0; index < partial.total; index++) {
       const piece = partial.pieces.get(index)
       if (piece === undefined) return null
       parts.push(piece)
-      received += piece.length
     }
-    if (received !== partial.totalBytes) throw new Error('reassembled size does not match its header')
+    if (partial.bytes !== partial.totalBytes) throw new Error('reassembled size does not match its header')
     return Buffer.concat(parts)
   }
 

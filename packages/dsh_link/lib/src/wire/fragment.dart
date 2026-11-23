@@ -127,7 +127,14 @@ class Reassembler {
       _partials.remove(fragment.messageId);
       throw const FormatException('fragments disagree about their message shape');
     }
-    final complete = partial.add(fragment.index, fragment.payload);
+    final Uint8List? complete;
+    try {
+      complete = partial.add(fragment.index, fragment.payload);
+    } on FormatException {
+      // 一个不再可信的在建消息不该留在表里继续占位置。
+      _partials.remove(fragment.messageId);
+      rethrow;
+    }
     if (complete == null) return null;
     _partials.remove(fragment.messageId);
     return complete;
@@ -143,8 +150,18 @@ class _Partial {
   final int total;
   final int totalBytes;
   final Map<int, Uint8List> _pieces = {};
+  int _bytes = 0;
 
   Uint8List? add(int index, Uint8List payload) {
+    // Count as we go: [totalBytes] is the sender's claim, and it is the only
+    // thing bounding what we hold. Checking it only once the last piece lands
+    // lets a peer send `total` pieces of 48 KiB against a 4 MiB claim and buffer
+    // hundreds of megabytes first.
+    final previous = _pieces[index];
+    _bytes += payload.length - (previous?.length ?? 0);
+    if (_bytes > totalBytes) {
+      throw const FormatException('fragments exceed the size their header declared');
+    }
     _pieces[index] = payload;
     if (_pieces.length < total) return null;
     final out = Uint8List(totalBytes);

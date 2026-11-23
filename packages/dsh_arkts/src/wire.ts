@@ -106,6 +106,7 @@ interface Partial {
   readonly total: number
   readonly totalBytes: number
   readonly pieces: Map<number, Uint8Array>
+  bytes: number
 }
 
 /** 收齐片段再交出一条完整消息。 */
@@ -130,12 +131,21 @@ export class Reassembler {
         const oldest = this.partials.keys().next()
         if (!oldest.done) this.partials.delete(oldest.value)
       }
-      partial = { total: value.total, totalBytes: value.totalBytes, pieces: new Map() }
+      partial = { total: value.total, totalBytes: value.totalBytes, pieces: new Map(), bytes: 0 }
       this.partials.set(value.messageId, partial)
     }
     if (partial.total !== value.total || partial.totalBytes !== value.totalBytes) {
       this.partials.delete(value.messageId)
       throw new Error('fragments disagree about their message shape')
+    }
+    // 边收边算，而不是等最后一片再校验：totalBytes 是发送方的声明，也是唯一
+    // 约束我们手里这堆字节的东西。只在收齐时比较，对端就能用 total 片各 48 KiB
+    // 配上 4 MiB 的声明，先把几百兆缓冲进来。
+    const previous = partial.pieces.get(value.index)
+    partial.bytes += value.payload.length - (previous === undefined ? 0 : previous.length)
+    if (partial.bytes > partial.totalBytes) {
+      this.partials.delete(value.messageId)
+      throw new Error('fragments exceed the size their header declared')
     }
     partial.pieces.set(value.index, value.payload)
     if (partial.pieces.size < partial.total) return null

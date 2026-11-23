@@ -59,6 +59,8 @@ probe/_ticket.txt
 probe/_*.out
 probe/_*.err
 probe/_ui*.xml
+# uiautomator dump 的快照随手起名，一律不入库
+probe/_*.xml
 probe/_msg*.txt
 probe/_apkcheck/
 

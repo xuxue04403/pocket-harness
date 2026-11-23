@@ -41,12 +41,13 @@
 - 业务数据走 Noise IK（`X25519` + `ChaCha20-Poly1305`），中继与局域网中间设备只见密文。
 - 设备私钥只在电脑的 DSH credentials 服务与手机的 keystore 里，不落明文。
 - 对端公钥按设备固定，变化即拒绝握手。
+- 分片消息在**收到每一片时**就按头部声明的总长结算，超出即丢弃整条消息：只在收齐时才比较的话，对端可以用 `total` 片各 48 KiB 配上 4 MiB 的声明，先把几百兆缓冲进来。两端（Host、Dart、ArkTS）都按这条结算。
 
 ### 校验
 
 | 测试面 | 数量 | 命令 |
 |---|---|---|
-| Dart 协议层 | 48 | `cd packages\dsh_link; dart analyze; dart test` |
-| Host 插件与中继 | 34 | `node --test host` |
+| Dart 协议层 | 49 | `cd packages\dsh_link; dart analyze; dart test` |
+| Host 插件与中继 | 35 | `node --test host` |
 | TypeScript 协议层（鸿蒙共用） | 23 套 | `cd packages\dsh_arkts; npm test` |
 | Flutter 客户端 | 132 | `cd app; flutter analyze; flutter test` |

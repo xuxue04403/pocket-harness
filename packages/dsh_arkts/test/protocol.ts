@@ -17,6 +17,7 @@ import {
   responseEnvelope,
   splitFragments,
   FRAME_KIND,
+  MAX_REASSEMBLED_BYTES,
   MAX_SEALED_PAYLOAD,
 } from '../src/wire'
 import {
@@ -109,6 +110,25 @@ console.log('fragments')
     mismatched = true
   }
   ok('fragments that disagree are rejected', mismatched)
+
+  // totalBytes 是发送方的声明，也是唯一约束我们手里这堆字节的东西：只在收齐时
+  // 比较，对端就能用 total 片各 48 KiB 配上 4 MiB 的声明，先缓冲几百兆。
+  const flood = new Reassembler()
+  const chunk = new Uint8Array(MAX_SEALED_PAYLOAD)
+  const claim = MAX_REASSEMBLED_BYTES
+  let accepted = 0
+  let caught = false
+  try {
+    while (accepted < 3000) {
+      flood.accept({ messageId: 7, index: accepted, total: 3000, totalBytes: claim, payload: chunk })
+      accepted += 1
+    }
+  } catch {
+    caught = true
+  }
+  ok('a flood of oversize pieces is dropped', caught)
+  ok('it stops near the declared size, not at 3000 pieces', accepted < 100)
+  equals('the dropped message is no longer pending', flood.pending, 0)
 }
 
 console.log('envelopes')
