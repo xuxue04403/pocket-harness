@@ -205,6 +205,9 @@ class LocalRunner {
   Future<String> start({Duration timeout = const Duration(seconds: 90)}) async {
     final LocalLayout layout = await this.layout();
     final String logPath = '${layout.rootfsPath}$kDshLog';
+    // 上一轮可能留下了一个还占着端口的 dsh（应用被系统杀掉时 proot 的子进程会变成
+    // 孤儿）。先清干净再起，否则新进程只会拿到 EADDRINUSE 然后一路超时。
+    await _killDsh(layout);
     await host.start(
       tag: 'dsh',
       argv: inRootfs(layout, startDshScript(port: port)),
@@ -224,7 +227,7 @@ class LocalRunner {
         }
       }
     }
-    await host.stop('dsh');
+    await _killDsh(layout);
     final String tail = transcript.trim();
     throw LocalDshError(
       'dsh 在 ${timeout.inSeconds} 秒内没有写出带 token 的地址。'
@@ -267,13 +270,23 @@ class LocalRunner {
 
   Future<void> stop() async {
     final LocalLayout layout = await this.layout();
+    await _killDsh(layout);
+    url = null;
+  }
+
+  /// 结束 rootfs 里的 dsh，**并且**把持着那条命令的原生子进程一起停掉。
+  ///
+  /// 两件事都要做：`pkill` 只在 rootfs 里能看见进程，而外面那条 `proot` 自己并不知道
+  /// 它的子进程已经没了；只停外面那条则 `dsh` 会变成孤儿继续占着端口。启动超时的
+  /// 时候也必须走这里 —— 否则一条起不来的 `dsh web` 会把 8123 攥住，下一次启动只会
+  /// 再超时一次，而报错看起来还是「没有写出地址」。
+  Future<void> _killDsh(LocalLayout layout) async {
     await _runToEnd(
       tag: 'stop',
       argv: inRootfs(layout, stopDshCommand),
       allowFailure: true,
     );
     await host.stop('dsh');
-    url = null;
   }
 
   /// `df -k` 一次，拿去算可用空间。失败（比如 toybox 输出格式变了）就返回
