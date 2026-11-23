@@ -204,6 +204,52 @@ test('a connection that talks during admission is dropped at the queue ceiling',
   await server.close()
 })
 
+test('a link whose gateway cannot be built closes instead of crashing the Host', async () => {
+  // `createGateway` is plugin code and may throw. Admission is started with
+  // `void this.#admit(frame)`, so before the fix that throw became an unhandled
+  // rejection — and node 22+ turns one of those into a dead process. The whole
+  // Harness would exit, taking every other feature with it, while the phone saw
+  // only "the connection closed". A link that cannot be set up must close.
+  const warnings = []
+  const server = new LinkServer({
+    identity: { deviceId: newDeviceId(), privateKey: Buffer.alloc(32, 9), publicKey: Buffer.alloc(32, 9) },
+    createGateway: () => { throw new Error('gateway construction exploded') },
+    authorize: () => ({
+      ok: true,
+      pinnedKey: null,
+      createPeer: async () => ({ dispose: async () => {} }),
+      pinKey: async () => {},
+    }),
+    logger: { info: () => {}, warn: message => warnings.push(message) },
+    hostName: 'Test Host',
+  })
+  let frameHandler = () => {}
+  let closed = false
+  const transport = {
+    onFrame: handler => { frameHandler = handler },
+    onClose: () => {},
+    send: () => {},
+    close: () => { closed = true },
+  }
+  server.attach(transport)
+  frameHandler(encodeFrame(
+    FRAME_KIND.control,
+    Buffer.from(JSON.stringify({
+      v: 1,
+      connection: 'gateway-throw-probe',
+      client: newDeviceId(),
+      proof: 'not-checked',
+    }), 'utf8'),
+  ))
+  await new Promise(resolve => setTimeout(resolve, 60))
+  assert.equal(closed, true, 'the link should close when its gateway cannot be built')
+  assert.ok(
+    warnings.includes('pocket-harness: could not start this link (gateway construction exploded)'),
+    `expected a warning about the failed link, saw ${JSON.stringify(warnings)}`,
+  )
+  await server.close()
+})
+
 /** A LinkServer that never accepts anything: these tests only care about binds. */
 function idleServer(port = 0) {
   const server = new LinkServer({
@@ -252,7 +298,8 @@ test('an explicitly configured port fails loudly when it is taken', async () => 
 })
 test('a pairing proof is accepted only when it matches the expected one', () => {
   // This pins the *result* of the comparison, not its cost: no unit test can
-  // measure constant-timeness reliably, so that property rests on sameProof`n  // routing every equal-length case through `timingSafeEqual` rather than on
+  // measure constant-timeness reliably, so that property rests on `sameProof`
+  // routing every equal-length case through `timingSafeEqual` rather than on
   // these assertions. What is worth pinning here is the edge behaviour a future
   // refactor could get wrong: a difference in the last character must still be
   // rejected exactly like one in the first, and non-strings must never reach the

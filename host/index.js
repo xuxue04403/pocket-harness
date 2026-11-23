@@ -102,7 +102,14 @@ export function apply(ctx, config = {}) {
 
   // A restarted plugin must not leave the old port bound.
   ctx.effect(() => () => {
-    void stop()
+    // Teardown runs while the Harness is unloading this plugin, and an unhandled
+    // rejection here would end that process instead of just leaving a port busy.
+    // A stop that throws is logged and otherwise ignored.
+    Promise.resolve()
+      .then(() => stop())
+      .catch(error => {
+        ctx.logger?.warn?.(`pocket-harness: could not stop cleanly (${error?.message ?? error})`)
+      })
   }, 'pocket-harness: link server lifetime')
 
   let refresh = null
@@ -431,7 +438,13 @@ class HostState {
     }
     const peer = connection.createPeer({ principal: { kind: 'owner' }, interactions: 'answer' })
     this.#ctx.effect(() => () => {
-      void peer.dispose?.()
+      // Same rule as the listener teardown: disposing a Peer is bookkeeping, and a
+      // rejection from it must not take the Harness down while unloading.
+      Promise.resolve()
+        .then(() => peer.dispose?.())
+        .catch(error => {
+          this.#ctx.logger?.warn?.(`pocket-harness: could not dispose a phone Peer (${error?.message ?? error})`)
+        })
     }, 'pocket-harness: phone Peer lifetime')
     return peer
   }

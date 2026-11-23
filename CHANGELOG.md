@@ -44,12 +44,13 @@
 - 分片消息在**收到每一片时**就按头部声明的总长结算，超出即丢弃整条消息：只在收齐时才比较的话，对端可以用 `total` 片各 48 KiB 配上 4 MiB 的声明，先把几百兆缓冲进来。两端（Host、Dart、ArkTS）都按这条结算。
 - 配对口令（`pairingProof` 的 HMAC）校验走 `timingSafeEqual`，不再用字符串 `!==`：后者在第一个不同的字符处就返回，能被计时逐步还原出正确的那串值并重放。
 - 链路的流上限覆盖**还在等网关回话的开流请求**：`link/stream.open` 要 await 网关，只数已开流的话，一次并发几百个请求会全部看到「还没满」而通过，等网关照做就突破了 16 条。
+- 插件里每个不等结果的 Promise（准入时建网关、记设备公钥、卸载时清理监听与 Peer）都挂了拒绝处理。node 22+ 把未处理的拒绝当作致命错误，原先 `createGateway` 抛错或凭据写入失败会让**整个 Harness 退出**，而手机端只看到「连接被关闭」。现在这类失败只记录一条告警并关掉那一条链路。
 
 ### 校验
 
 | 测试面 | 数量 | 命令 |
 |---|---|---|
 | Dart 协议层 | 49 | `cd packages\dsh_link; dart analyze; dart test` |
-| Host 插件与中继 | 38 | `node --test host` |
+| Host 插件与中继 | 39 | `node --test host` |
 | TypeScript 协议层（鸿蒙共用） | 23 套 | `cd packages\dsh_arkts; npm test` |
 | Flutter 客户端 | 132 | `cd app; flutter analyze; flutter test` |

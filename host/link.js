@@ -180,7 +180,11 @@ export class LinkServer {
   attach(transport) {
     if (this.#links.size >= MAX_CONNECTIONS) {
       this.#logger?.warn?.('pocket-harness: refused a connection over the limit')
-      void transport.close?.()
+      // A close that rejects would be an unhandled rejection, which node turns
+      // into a dead process — for a peer we are refusing anyway.
+      Promise.resolve()
+        .then(() => transport.close?.())
+        .catch(() => {})
       return null
     }
     const link = new Link({ transport, server: this })
@@ -253,7 +257,16 @@ class Link {
       this.#queued.push(frame)
       return
     }
-    void this.#admit(frame)
+    // Admission is the one place where plugin code runs (`createGateway` builds
+    // the RPC adapter), and a throw there used to escape as an unhandled
+    // rejection: node 22+ treats that as fatal, so one bad gateway took the whole
+    // Harness down and every phone saw only "the connection closed". A link that
+    // cannot be set up is a link that closes, nothing more.
+    void this.#admit(frame).catch(error => {
+      const { logger } = this.#server.internals
+      logger?.warn?.(`pocket-harness: could not start this link (${error?.message ?? error})`)
+      void this.close()
+    })
   }
 
   async #admit(frame) {
@@ -339,7 +352,18 @@ class Link {
     channel.on('established', () => {
       // Only now is the client's static key proven; pin it if it was new.
       const remote = session.remoteStatic
-      if (decision.pinnedKey === null && remote !== null) void decision.pinKey?.(remote)
+      if (decision.pinnedKey === null && remote !== null) {
+        // Pinning writes the credentials record, so it can fail (a locked store, a
+        // disk that went away). Left as a bare `void`, that rejection would be
+        // unhandled and node would end the process — over a bookkeeping write the
+        // phone's current session does not even need. The link stays up; the only
+        // cost is that this phone has to present the pairing code again next time.
+        Promise.resolve()
+          .then(() => decision.pinKey?.(remote))
+          .catch(error => {
+            logger?.warn?.(`pocket-harness: could not remember this phone (${error?.message ?? error})`)
+          })
+      }
       logger?.info?.('pocket-harness: link established')
     })
     channel.on('close', () => {
