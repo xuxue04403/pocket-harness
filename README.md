@@ -135,7 +135,7 @@ node run.mjs          # 监听 8080，/healthz 可探活
 # Dart 协议层：49 个测试
 cd packages\dsh_link; dart analyze; dart test
 
-# Host 插件与中继：37 个测试
+# Host 插件与中继：38 个测试
 cd relay; npm install; cd ..      # 中继的测试会 import relay/server.mjs，它依赖 ws
 node --test host
 

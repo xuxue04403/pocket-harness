@@ -5,7 +5,7 @@
 // an error rather than an implicit create.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
@@ -15,6 +15,7 @@ import {
   CANDIDATE_NAMES,
   LOCAL_CANDIDATES,
   describeInstructions,
+  describeEntry,
   findProjectRoot,
   isInside,
   readInstruction,
@@ -154,4 +155,24 @@ test('serve routes the four methods and rejects the rest', () => {
   serveInstructions({ method: 'write', args: { path: join(root, 'project', 'AGENTS.md'), text: 'via serve\n' } }, env)
   assert.equal(readInstruction(join(root, 'project', 'AGENTS.md')).text, 'via serve\n')
   assert.throws(() => serveInstructions({ method: 'delete' }, env), /has no method/)
+})
+test('a file that vanishes between listing and describing is skipped, not fatal', () => {
+  // Listing checks each candidate and then stats it. A `git checkout`, an atomic
+  // save, or someone deleting the file in that window makes the stat fail; one
+  // vanished file must not take the whole page down on the phone.
+  const row = describeEntry({
+    scope: 'project',
+    label: '.',
+    path: join(root, 'project', 'AGENTS.md'),
+    name: 'AGENTS.md',
+  })
+  assert.equal(row.name, 'AGENTS.md')
+  // Another test may have rewritten this file, so compare with what is on disk now.
+  assert.equal(row.bytes, statSync(join(root, 'project', 'AGENTS.md')).size)
+  assert.equal(describeEntry({
+    scope: 'project',
+    label: '.',
+    path: join(root, 'project', 'CLAUDE.md'),
+    name: 'CLAUDE.md',
+  }), null)
 })

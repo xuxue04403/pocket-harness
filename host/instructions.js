@@ -137,20 +137,38 @@ function directoriesTo(projectRoot, cwd) {
 /** One row per file, with the metadata a phone needs to show a list. */
 export function describeInstructions(cwd, env = process.env) {
   const { projectRoot, files } = listInstructionFiles(cwd, env)
+  const rows = []
+  for (const file of files) {
+    const row = describeEntry(file)
+    if (row !== null) rows.push(row)
+  }
+  return { projectRoot, cwd: cwd ?? null, files: rows }
+}
+
+/**
+ * Describes one candidate, or null when it went away between listing and reading.
+ *
+ * `listInstructionFiles` checks each candidate with `isFile`, and the stat that
+ * follows is a second look at the same path. A `git checkout`, an editor's
+ * atomic save, or a person deleting the file in between makes that second look
+ * fail — and a listing that throws ENOENT for one vanished file would take the
+ * whole page down on the phone, when the honest answer is simply that this file
+ * is no longer there.
+ */
+export function describeEntry(file) {
+  let stats
+  try {
+    stats = statSync(file.path)
+  } catch {
+    return null
+  }
   return {
-    projectRoot,
-    cwd: cwd ?? null,
-    files: files.map(file => {
-      const stats = statSync(file.path)
-      return {
-        scope: file.scope,
-        label: file.label,
-        path: file.path,
-        name: file.name,
-        bytes: stats.size,
-        modifiedAt: stats.mtimeMs,
-      }
-    }),
+    scope: file.scope,
+    label: file.label,
+    path: file.path,
+    name: file.name,
+    bytes: stats.size,
+    modifiedAt: stats.mtimeMs,
   }
 }
 
