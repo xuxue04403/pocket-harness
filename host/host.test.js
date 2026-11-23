@@ -20,7 +20,7 @@ import { open, seal } from './chacha20_poly1305.js'
 import { encodeEnvelope, envelope } from './envelope.js'
 import { LinkServer } from './link.js'
 import { RpcServer } from './rpc.js'
-import { sameProof } from './index.js'
+import { apply, sameProof } from './index.js'
 
 test('credential keys mirror the credentials service rules', () => {
   assert.equal(credentialKey('dsh-pocketharness-host', 'identity'), 'dsh-pocketharness-host/identity')
@@ -361,4 +361,42 @@ test('stream opens that are still waiting on the gateway count against the limit
   assert.equal(server.openStreams, 16, `expected 16 open streams, saw ${server.openStreams}`)
   letGo()
   await server.close()
+})
+
+test('a stop that arrives while the port is binding still gives the port back', async () => {
+  // Unloading the plugin is synchronous from the Harness's point of view, but the
+  // listener is created inside an async start. Without a guard the sequence
+  // "begin start, unload, start finishes" leaves a bound socket that no field
+  // points at: the port stays taken for the life of the process, the next start
+  // lands on a random port, and the pairing code names an address nobody listens
+  // on. The start must notice it lost its owner and close what it bound.
+  let releaseIdentity
+  const identityGate = new Promise(resolve => { releaseIdentity = resolve })
+  const logs = []
+  const disposers = []
+  const ctx = {
+    logger: { info: message => logs.push(message), warn: message => logs.push(`warn ${message}`) },
+    credentials: {
+      readRecord: async () => {
+        await identityGate
+        return null
+      },
+      modifyRecord: async (_key, mutate) => mutate(),
+    },
+    get: () => ({ createPeer: () => ({ dispose: () => undefined }) }),
+    effect: factory => disposers.push(factory()),
+  }
+
+  apply(ctx, { port: 0, bindHost: '127.0.0.1' })
+  // Let start() reach the awaited identity read, then unload.
+  await new Promise(resolve => setTimeout(resolve, 10))
+  for (const dispose of disposers) dispose()
+  releaseIdentity()
+  await new Promise(resolve => setTimeout(resolve, 200))
+
+  assert.deepEqual(
+    logs.filter(line => line.includes('listening on port') || line.includes('pairing code')),
+    [],
+    'a listener whose plugin was unloaded must not announce a port or a pairing code',
+  )
 })

@@ -56,43 +56,72 @@ export function apply(ctx, config = {}) {
   let server = null
   let starting = null
   let dialer = null
+  // Bumped by stop(). A start that began before the bump has lost its owner and
+  // must undo whatever it bound, no matter how far along it has come: assigning
+  // `server` happens before the port is bound, so `server !== current` is not a
+  // usable signal — this counter is.
+  let epoch = 0
 
   /** Opens the listener once, remembering the promise so calls can await it. */
   const start = () => {
     if (starting !== null) return starting
-    starting = (async () => {
+    const mine = ++epoch
+    const started = (async () => {
       const identity = await state.identity()
-      server = new LinkServer({
+      // stop() may have run while the identity was still being read. Nothing has
+      // been bound yet, so the cheapest correct answer is to come up empty rather
+      // than to create a listener the Harness no longer owns.
+      if (epoch !== mine) return null
+      const current = new LinkServer({
         identity,
         createGateway: peer => gatewayFor(ctx, peer),
         authorize: request => state.authorize(request),
         logger: ctx.logger,
         hostName: config.hostName ?? 'Pocket Harness Host',
       })
+      server = current
       // A profile that never picked a port must still come up when 48100 is
       // taken, because the alternative is a plugin that silently serves nobody.
       // An explicitly configured port is honoured strictly: moving away from a
       // port the operator opened in a firewall would look like a broken install.
       const wanted = config.port
-      const port = await server.listen({
+      const port = await current.listen({
         port: wanted ?? DEFAULT_PORT,
         host: config.bindHost ?? '0.0.0.0',
         fallbackToAnyPort: wanted === undefined,
       })
+      // A stop() that arrived while the port was being bound already gave up on
+      // this start. Without this check the socket would stay bound with nothing
+      // holding a reference to it: the port would be taken for the life of the
+      // process, a later start would land on a random port, and no pairing code
+      // would ever name the address people are actually able to dial.
+      if (epoch !== mine) {
+        await current.close()
+        return current
+      }
       ctx.logger?.info?.(`pocket-harness: link server listening on port ${port}`)
-      dialer = await startRelay(ctx, config, state, server)
-      return server
+      dialer = await startRelay(ctx, config, state, current)
+      return current
     })()
-    return starting
+    starting = started
+    return started
   }
 
   /** Releases the port, the relay dial and every live phone link. */
   const stop = async () => {
     const current = server
     const currentDialer = dialer
+    const pending = starting
+    epoch += 1
     server = null
     dialer = null
     starting = null
+    if (pending !== null) {
+      // A start that is still binding must finish before the port can be called
+      // released. It notices the epoch moved on and closes what it bound; waiting
+      // here only makes the ordering explicit.
+      await pending.catch(() => undefined)
+    }
     if (currentDialer !== null) await currentDialer.close()
     if (current !== null) {
       await current.close()
@@ -123,7 +152,12 @@ export function apply(ctx, config = {}) {
   // Already-paired phones are unaffected: they are admitted by pinned key and
   // never look at this secret again.
   const publishCode = async current => {
+    // A code for a listener that has already been stopped — or one that never
+    // came up because it was unloaded while starting — would send people to a
+    // closed port, and its refresh timer would outlive the plugin.
+    if (current === null || server !== current) return
     const ticket = await state.newTicket(current.port)
+    if (server !== current) return
     ctx.logger?.info?.(`pocket-harness: pairing code ${encodeTicket(ticket)}`)
     const remaining = Math.max(1000, (ticket.expiresAt ?? Date.now()) - Date.now())
     refresh = setTimeout(() => {

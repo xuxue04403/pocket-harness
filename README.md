@@ -135,7 +135,7 @@ node run.mjs          # 监听 8080，/healthz 可探活
 # Dart 协议层：49 个测试
 cd packages\dsh_link; dart analyze; dart test
 
-# Host 插件与中继：39 个测试
+# Host 插件与中继：40 个测试
 cd relay; npm install; cd ..      # 中继的测试会 import relay/server.mjs，它依赖 ws
 node --test host
 
@@ -194,6 +194,7 @@ CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作�
 - 配对口令的校验走 `timingSafeEqual`：字符串 `!==` 会在第一个不同的字符处停下，可被计时逐步还原，而这串值一旦泄漏就能重放。
 - 每条链路最多 16 条流，且**还在等网关回话的开流请求同样占名额**：上限在 await 之前就扣掉，否则一次并发请求会全部通过检查。
 - 插件里每个「不等结果的 Promise」（建链路、记设备公钥、卸载时清理）都挂了拒绝处理：node 22+ 把未处理的拒绝当成致命错误，一条连不上来的链路不该让整个 Harness 退出。
+- 卸载发生在「启动还没绑完端口」的那一刻时，那次启动会把自己绑到的监听器关掉：否则端口被一个没人持有的 socket 占到进程结束，下一次启动落到随机端口，配对码里的地址谁也连不上。
 
 发现安全问题请私下联系维护者，不要先开公开 issue。
 
