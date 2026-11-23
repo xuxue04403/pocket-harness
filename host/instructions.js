@@ -14,7 +14,7 @@
 // Everything here is plain node: no `@deepseek-ai/*` imports, so it tests without
 // a running Harness.
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -216,10 +216,17 @@ function guardPath(path, { forWrite = false, create = false, env = process.env }
   if (!CANDIDATE_NAMES.includes(name)) {
     throw coded('NOT_AN_INSTRUCTION_FILE', `${name} is not one of ${CANDIDATE_NAMES.join(', ')}`)
   }
-  const insideGlobal = globalRoots(env).some(entry => isInside(target, entry.root))
+  // The scope check has to run on what the filesystem says, not on what the
+  // string says: `resolve()` never looks at links, so a directory junction or
+  // symlink inside the project would let a phone write `AGENTS.md` somewhere
+  // the person never opened. `realTarget` follows them (and still works for a
+  // file that does not exist yet by resolving its nearest existing ancestor).
+  const real = realTarget(target)
+  const insideGlobal = globalRoots(env).some(entry => isInside(real, realTarget(entry.root)))
   // No project root means no project scope at all, so a stray file is refused.
-  const projectRoot = findProjectRoot(dirname(target))
-  const insideProject = projectRoot !== null && isInside(target, projectRoot)
+  const projectRoot = findProjectRoot(dirname(real))
+  const resolvedRoot = projectRoot === null ? null : realTarget(projectRoot)
+  const insideProject = resolvedRoot !== null && isInside(real, resolvedRoot)
   if (!insideGlobal && !insideProject) {
     throw coded('OUTSIDE_SCOPE', 'this directory is not an instruction scope for this user')
   }
@@ -232,6 +239,31 @@ function guardPath(path, { forWrite = false, create = false, env = process.env }
     if (!isDirectory(dirname(target))) throw coded('NOT_FOUND', 'this instruction file has no directory')
   }
   return { path: target }
+}
+
+/**
+ * The real path of `target`, following links and junctions.
+ *
+ * `resolve()` is purely lexical, so it is only good for comparing strings a
+ * person typed. A directory link inside a project points somewhere else
+ * entirely, and a scope check that trusted the string would let the phone write
+ * outside it. The target may not exist yet (the "new file" flow), so the walk
+ * climbs to the nearest existing ancestor and appends the rest unchanged.
+ */
+function realTarget(target) {
+  let current = target
+  const rest = []
+  for (;;) {
+    try {
+      return rest.length === 0 ? realpathSync(current) : join(realpathSync(current), ...rest)
+    } catch {
+      const parent = dirname(current)
+      // Nothing on this path exists up to the root; the string is all we have.
+      if (parent === current) return target
+      rest.unshift(basename(current))
+      current = parent
+    }
+  }
 }
 
 /** An Error carrying a `code`, the shape the RPC layer forwards verbatim. */

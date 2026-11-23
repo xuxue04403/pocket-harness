@@ -5,7 +5,7 @@
 // an error rather than an implicit create.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
@@ -45,7 +45,6 @@ before(() => {
 after(() => {
   rmSync(root, { recursive: true, force: true })
 })
-
 test('the candidate lists match what the loader documents', () => {
   assert.deepEqual(BASE_CANDIDATES, ['AGENTS.md', 'CLAUDE.md'])
   assert.deepEqual(LOCAL_CANDIDATES, ['AGENTS.local.md', 'CLAUDE.local.md'])
@@ -175,4 +174,34 @@ test('a file that vanishes between listing and describing is skipped, not fatal'
     path: join(root, 'project', 'CLAUDE.md'),
     name: 'CLAUDE.md',
   }), null)
+})
+
+test('a linked directory cannot be used to write outside the project', () => {
+  // `resolve()` is lexical: it never looks at the filesystem. A directory link
+  // inside the project therefore passes a string-based scope check while the
+  // write lands somewhere else entirely. Junctions can be made without any
+  // privilege on Windows, and symlinks are the same story on Linux and macOS,
+  // so this is a real escape rather than a Windows quirk.
+  const outside = join(root, 'outside')
+  const linkPath = join(root, 'project', 'linked')
+  mkdirSync(outside, { recursive: true })
+  try {
+    symlinkSync(outside, linkPath, 'junction')
+  } catch {
+    // A platform that refuses links cannot exhibit the bug; the guard is still
+    // exercised by every other scope test.
+    return
+  }
+  assert.throws(
+    () => writeInstruction(join(linkPath, 'AGENTS.md'), 'planted\n', { create: true, env }),
+    error => error.code === 'OUTSIDE_SCOPE',
+  )
+  // Nothing may have reached the other side of the link.
+  assert.equal(existsSync(join(outside, 'AGENTS.md')), false)
+  // A link that stays inside the project is still fine.
+  const inner = join(root, 'project', 'packages')
+  const innerLink = join(root, 'project', 'alias')
+  symlinkSync(inner, innerLink, 'junction')
+  const written = writeInstruction(join(innerLink, 'AGENTS.md'), 'shared\n', { create: true, env })
+  assert.equal(written.path, join(innerLink, 'AGENTS.md'))
 })
