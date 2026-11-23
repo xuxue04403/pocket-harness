@@ -82,7 +82,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1225 KB，内含 `ets/modules.abc` 779,604 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1228 KB，内含 `ets/modules.abc` 780,700 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -124,7 +124,7 @@ npm install --registry=https://repo.harmonyos.com/npm `
 .\build.ps1                      # 也可以用 -Sdk 指定；不给就读 OHOS_BASE_SDK_HOME / DEVECO_SDK_HOME
 ```
 
-产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,254,449 字节）与 `entry-default-signed.hap`（1,299,782 字节，`verify: Verify success`）。
+产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,256,221 字节）与 `entry-default-signed.hap`（1,298,688 字节，`verify: Verify success`）。
 
 CI 里的 `harmony` job 走的就是这一条，且是手动触发（`workflow_dispatch`）：它会先检查 `OHOS_BASE_SDK_HOME` / `DEVECO_SDK_HOME` 下有没有摆好的 SDK，没有就把上面第 2 步的布局要求打出来并失败，不会假装构建成功。
 
@@ -420,6 +420,21 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 
 **不要在同一个会话里验证「杀活任务」**：那个「运行中」的任务很可能就是当前会话自己的工具
 调用，杀它等于把自己掐断。我只对已经结束的任务验证过终止路径。
+
+### 跟随输出要在「用户换了目标」时自己停下
+
+`openOutput` 是 `for (;;)` 里 `await stream.next()`，而点击另一行、或者关掉输出面板，都
+不会让上一个循环停 —— 它在自己的栈里拿着 `chunks`，每来一帧就 `this.output = chunks` 写回
+`@State`。后果有两个：旧任务的输出会盖掉新任务刚显示的内容；面板关掉之后它还在后台一帧
+一帧地写。
+
+修法是一个世代号：`openOutput` 开头 `const mine = ++this.outputSeq`，每次醒来先比
+`this.outputSeq !== mine` 就 `return`；`closeOutput()` 与 `aboutToDisappear()` 都把这个号
+加一。同时 `finally` 里对提前退出的流补一次 `stream.return(undefined).catch(...)` ——
+`job/follow` 自己不结束的话，网络那头会一直记着这条流。
+
+这类「消费方被换掉但生产方还在写」的问题在任何长流上都可能出现，判据是：**这个循环有没有
+一个不是「流结束」的退出条件**。没有的话，它一定会在某个交互路径上变成幽灵写入者。
 
 ### agent 的计划：`null` 与空数组是两件事
 

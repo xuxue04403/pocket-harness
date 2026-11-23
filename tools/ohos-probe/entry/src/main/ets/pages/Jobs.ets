@@ -74,6 +74,8 @@ struct Jobs {
   private sessionId: string = ''
   private link: LinkClient | null = null
   private poller: number = -1
+  /** 每次开始跟随都加一；过期的循环看到它变了就退出（见 openOutput）。 */
+  private outputSeq: number = 0
 
   aboutToAppear(): void {
     const params = router.getParams() as JobsParams
@@ -84,6 +86,9 @@ struct Jobs {
 
   aboutToDisappear(): void {
     if (this.poller >= 0) clearInterval(this.poller)
+    // 页面走了，跟随循环也该停：它每来一帧都会往 @State 上写，
+    // 而 `this.link` 马上就要被关掉。
+    this.outputSeq = this.outputSeq + 1
     this.closeLink()
   }
 
@@ -180,12 +185,18 @@ struct Jobs {
   private async openOutput(job: JobSummary): Promise<void> {
     const link = this.link
     if (link === null) return
+    // 点另一行、或关掉面板，都不会让上一条跟随循环停下：它在 `for (;;)` 里
+    // 拿着自己的 `chunks`，每来一帧就把 `this.output = chunks` 写回去。于是旧任务
+    // 的输出会盖掉新任务刚显示的内容，而且关掉面板之后还在后台一帧一帧地写。
+    // 用一个世代号让过期的循环自己退出。
+    const mine = ++this.outputSeq
     this.openJob = job
     this.output = ''
     this.outputDone = false
     this.outputLossy = false
+    let stream: JobStream | null = null
     try {
-      const stream: JobStream = link.rpc.openStream(
+      stream = link.rpc.openStream(
         'job/follow',
         followRequest(job.id, this.sessionId),
         { timeoutMs: 20000 },
@@ -193,6 +204,7 @@ struct Jobs {
       let chunks = ''
       for (;;) {
         const next: IteratorResult<JsonObject, void> = await stream.next()
+        if (this.outputSeq !== mine) return
         if (next.done === true || next.value === undefined) break
         const frame = readFollowFrame(next.value)
         if (frame === null) continue
@@ -206,14 +218,24 @@ struct Jobs {
           this.outputDone = true
         }
       }
-      this.outputDone = true
+      if (this.outputSeq === mine) this.outputDone = true
     } catch (error) {
+      if (this.outputSeq !== mine) return
       this.error = describeError(error)
       this.outputDone = true
+    } finally {
+      // 提前退出时也要把流关掉：`job/follow` 自己不结束的话，网络那头会一直
+      // 记着这条流，直到这条链路断开为止。
+      if (stream !== null) {
+        const abandoned = stream
+        abandoned.return(undefined).catch(() => undefined)
+      }
     }
   }
 
   private closeOutput(): void {
+    // 关掉面板等于放弃这条跟随：世代号加一，还在跑的循环下一次醒来就退出。
+    this.outputSeq = this.outputSeq + 1
     this.openJob = null
     this.output = ''
     this.outputDone = false
