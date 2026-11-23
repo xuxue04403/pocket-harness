@@ -25,7 +25,7 @@
 ### 已知限制
 
 - **本机运行 dsh 未开启**：PRoot + Alpine 这条路已经**从 App 里跑通了**——点「安装」会下 rootfs、装 node 24 与 dsh，点「启动 dsh」约 60 秒后给出带 token 的地址，点「打开界面」WebView 真的渲染出 DSH 页面（见 [docs/mobile-local-dsh.md](mobile-local-dsh.md)）。但首次要下载 1.6 GB、`npm i -g` 要 23 分钟、装完占 2.0 GB，因此这个入口在 beta 里默认不露出。
-  已经做好的：断点续传（`.part` + `Range`，换镜像也接着下）、装前空间检查（不足 2.6 GB 直接说清楚）、失败原文可见（每个镜像的每次尝试都会写到界面上）。要试用可以自行构建：
+  已经做好的：断点续传（`.part` + `Range`，换镜像也接着下）、装前空间检查（不足 2.6 GB 直接说清楚）、失败原文可见（每个镜像的每次尝试都会写到界面上）。启动前会先把上一轮残留的 `dsh web` 清掉、启动超时也会先杀再报错——少了这一步，一次没起来的 `dsh web` 会一直占着 8123，下一次启动只会再超时一次，而报错看起来还是「没有写出地址」。要试用可以自行构建：
 
   ```bash
   flutter build apk --release --dart-define=POCKET_HARNESS_LOCAL_DSH=true
