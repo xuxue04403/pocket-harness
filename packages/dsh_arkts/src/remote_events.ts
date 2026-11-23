@@ -59,7 +59,15 @@ export class RemoteEvents {
   private readonly frames: RemoteInvocation[] = []
   private readonly notices: RemoteNotification[] = []
   private readonly cancelled: string[] = []
-  private pending: (() => void) | null = null
+  /**
+   * 正在等新帧的调用方，按挂上的顺序。
+   *
+   * 这里必须是**一组**而不是一个槽：`nextInvocation` 与 `nextNotification`
+   * 是对外两个方法，界面完全可以各挂一个（甚至同一个方法挂两次）。用单槽时
+   * 后挂的会覆盖前一个的唤醒函数，被覆盖那条 `for(;;)` 就永远等下去——
+   * 真机上表现为「审批弹窗再也没出现，但链路是好的」。
+   */
+  private readonly waiters: (() => void)[] = []
   private closed = false
   private failure: Error | null = null
   private cancel: StreamCancel | null = null
@@ -165,7 +173,7 @@ export class RemoteEvents {
         if (this.failure !== null) throw this.failure
         return null
       }
-      await new Promise<void>((wake) => { this.pending = wake })
+      await this.waitForNext()
     }
   }
 
@@ -175,8 +183,13 @@ export class RemoteEvents {
       const next = this.notices.shift()
       if (next !== undefined) return next
       if (this.closed) return null
-      await new Promise<void>((wake) => { this.pending = wake })
+      await this.waitForNext()
     }
+  }
+
+  /** 挂一个等待者，返回时说明可能有新帧，也可能已经关闭。 */
+  private waitForNext(): Promise<void> {
+    return new Promise<void>((wake) => { this.waiters.push(wake) })
   }
 
   /** 这条提问是否已被 Host 撤回。 */
@@ -234,9 +247,10 @@ export class RemoteEvents {
   }
 
   private wake(): void {
-    const pending = this.pending
-    this.pending = null
-    pending?.()
+    // 全部醒来，各自再去表里取；先清空再逐个叫，避免新挂上的等待者被这一轮
+    // 唤醒（它等的东西还没到）。
+    const waiters = this.waiters.splice(0, this.waiters.length)
+    for (const wake of waiters) wake()
   }
 }
 

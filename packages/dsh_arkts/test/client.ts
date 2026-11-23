@@ -120,6 +120,13 @@ interface HostOptions {
    * 把这条流关掉再降级，否则它会一直占着流名额，还让网关以为有人在回答。
    */
   readonly eventsWithoutReady?: boolean
+  /**
+   * `$events` 只回 `ready`，之后的帧由测试自己用 [FakeHost.pushEvent] 推。
+   *
+   * 用来验证"调用方已经在等、帧才到"这条路 —— 帧在 `open` 时就排好的话，
+   * 等待槽根本用不上，缺陷也就测不出来。
+   */
+  readonly deferEvents?: boolean
 }
 
 /** 进程内的 Host：hello → Noise responder → 一个只认几个端点的 RPC 服务。 */
@@ -181,6 +188,16 @@ class FakeHost {
 
   private reply(value: JsonObject): void {
     this.transport.send(encodeFrame({ kind: FRAME_KIND.control, payload: utf8(JSON.stringify(value)) }))
+  }
+
+  /**
+   * 在测试选定的时刻推一帧 `$events`。
+   *
+   * `streamId` 固定 7，与 `answer()` 里 `link/stream.open` 的应答一致：假 Host
+   * 一个进程只开一条事件流，够用且能让断言直白。
+   */
+  pushEvent(value: JsonObject): void {
+    this.send(eventEnvelope({ streamId: 7, hasValue: true, value }))
   }
 
   private send(value: Envelope): void {
@@ -245,6 +262,7 @@ class FakeHost {
           hasValue: true,
           value: { type: 'ready', clientId: 'client-under-test', host: { home: '/home/test' } },
         }))
+        if (this.options.deferEvents === true) return
         this.send(eventEnvelope({
           streamId,
           hasValue: true,
@@ -525,6 +543,48 @@ async function checkRemoteEvents(): Promise<void> {
   link.close()
 }
 
+async function checkBothWaitersWake(): Promise<void> {
+  // 两处等待同时挂上：一个等 waterfall（审批/提问），一个等通知。它们都是对外
+  // 方法，界面完全可以各挂一个。用单槽保存唤醒函数时，后挂的会覆盖前一个，
+  // 被覆盖那条 `for(;;)` 就永远等下去 —— 真机上表现为"审批弹窗再也没出现，
+  // 但链路是好的"，最难查的那一类。
+  const f = fixture({ deferEvents: true })
+  const link = await LinkClient.connect(connectOptions(f))
+  const events = await RemoteEvents.open(link.rpc, 4000)
+  const invocationWait = events.nextInvocation()
+  const notificationWait = events.nextNotification()
+  // 让两个 `for(;;)` 都真的挂到等待槽上，再推帧；否则帧先到、槽用不上，
+  // 这个缺陷测不出来（第一版就是这样假通过的）。
+  await new Promise<void>((resolve) => { setTimeout(resolve, 40) })
+  f.host.pushEvent({
+    type: 'waterfall',
+    event: 'approval/request',
+    eventId: 'evt-2',
+    agentId: 'agent-1',
+    request: { toolName: 'bash' },
+  })
+  f.host.pushEvent({ type: 'emit', event: 'session/turn-started', args: [] })
+  const label = (): Promise<string> => new Promise<string>((resolve) => {
+    setTimeout(() => resolve('timeout'), 3000)
+  })
+  const invocation = await Promise.race([
+    invocationWait.then((value) => (value === null ? 'null' : value.eventId)),
+    label(),
+  ])
+  const notification = await Promise.race([
+    notificationWait.then((value) => (value === null ? 'null' : value.event)),
+    label(),
+  ])
+  ok('a waiter for a waterfall wakes on its own frame', invocation === 'evt-2', String(invocation))
+  ok(
+    'a waiter for a notice is not starved by the other one',
+    notification === 'session/turn-started',
+    String(notification),
+  )
+  await events.close()
+  link.close()
+}
+
 async function checkFailedEventStreamIsClosed(): Promise<void> {
   // 旧版 Harness 没有 remotes 服务时会先开出流、再回一帧不是 ready 的东西。
   // 客户端在这里必须做两件事：报错降级，以及**把流关掉** —— 链路上只有 16 条
@@ -578,6 +638,7 @@ async function main(): Promise<void> {
   await checkHalfHandshakeIsClosed()
   await checkRelayRoute()
   await checkRemoteEvents()
+  await checkBothWaitersWake()
   await checkFailedEventStreamIsClosed()
   await checkTicketRoundTrip()
 
