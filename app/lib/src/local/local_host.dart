@@ -26,7 +26,10 @@ class LocalHost {
   /// 等不到 done。所以订阅要能被 await。
   Completer<void>? _listening;
 
-  /// 逐行的输出，`kind` 是 `stdout` / `stderr` / `exit`。
+  /// 逐行的输出，`kind` 是 `stdout` / `stderr` / `exit` / `dropped`。
+  ///
+  /// `dropped` 是原生侧发来的说明：订阅断开期间攒的输出超过了上限，只能保留
+  /// 最近的那些。它带 `line` 但不属于命令本身的输出，调用方可以当提示显示。
   Stream<LocalLine> get lines => _out.stream;
 
   Future<LocalPaths> paths() async {

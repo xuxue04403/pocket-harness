@@ -29,7 +29,16 @@ class MainActivity : FlutterActivity() {
     /// EventChannel 的 `onListen` 要跨一次平台往返才到。而 proot 跑一条
     /// `node --version && dsh --version` 只要 150 ms —— 如果这时直接把事件丢掉，
     /// 调用方永远等不到 exit，界面就一直停在「还没装」。
-    private val pending = java.util.concurrent.ConcurrentLinkedQueue<Map<String, Any>>()
+    ///
+    /// 但它必须有上限：`onCancel` 之后 sink 是 null，而 proot 的输出照旧在写
+    /// （`npm install -g` 一条要跑二十分钟、打上万行）。没有上限的话，只要订阅
+    /// 断过一次（切后台、引擎重建、页面 dispose），之后每一行都会永远留在内存里。
+    /// 只在这个列表上做增删的都是主线程代码（emit 走 Handler.post，onListen 本来
+    /// 就在主线程），所以用普通 ArrayDeque，不需要并发结构。
+    private val pending = java.util.ArrayDeque<Map<String, Any>>()
+
+    /// 上次补发之后，哪些 tag 的输出被丢过。补发时给每个 tag 先发一条说明。
+    private val droppedTags = LinkedHashSet<String>()
 
     /// 把动态链接的 proot 需要的 .so 摆成它要找的名字。
     ///
@@ -155,10 +164,7 @@ class MainActivity : FlutterActivity() {
                 override fun onListen(arguments: Any?, sink: EventChannel.EventSink?) {
                     events = sink
                     // 把订阅建立之前攒下的事件补发出去，顺序不变。
-                    while (true) {
-                        val event = pending.poll() ?: break
-                        main.post { events?.success(event) }
-                    }
+                    flushPending()
                 }
 
                 override fun onCancel(arguments: Any?) {
@@ -287,9 +293,39 @@ class MainActivity : FlutterActivity() {
             val sink = events
             if (sink != null) {
                 sink.success(event)
-            } else {
-                pending.add(event)
+                return@post
             }
+            // 攒到上限就丢最旧的一条，并且记住是哪个 tag 的输出被丢了。
+            // 补发时如果只是少了几行，调用方分不清「还没输出」和「输出被丢」；
+            // 一条明确的说明让界面能讲清楚。
+            if (pending.size >= MAX_PENDING_EVENTS) {
+                val evicted = pending.poll()
+                val evictedTag = evicted?.get("tag") as? String
+                if (!evictedTag.isNullOrEmpty()) droppedTags.add(evictedTag)
+            }
+            pending.add(event)
+        }
+    }
+
+    /// 把攒下的事件补发出去，并顺带说明是否丢过。
+    ///
+    /// 丢弃标记按 tag 发：Dart 侧每个 `_runToEnd` 只认自己 tag 的帧，一条
+    /// 没有 tag 的说明谁也收不到。
+    private fun flushPending() {
+        for (tag in droppedTags) {
+            if (tag.isEmpty()) continue
+            events?.success(
+                mapOf(
+                    "tag" to tag,
+                    "kind" to "dropped",
+                    "line" to "后台期间丢掉了部分输出（只保留最近 $MAX_PENDING_EVENTS 行）",
+                )
+            )
+        }
+        droppedTags.clear()
+        while (true) {
+            val event = pending.poll() ?: break
+            events?.success(event)
         }
     }
 
@@ -302,5 +338,9 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val CHANNEL = "cn.pocketharness/native"
         const val EVENTS = "cn.pocketharness/native/events"
+
+        /// 断订阅期间最多攒这么多行。`npm install -g` 一条命令会打上万行，
+        /// 而它能跑二十分钟 —— 不留上限就是二十多分钟的纯内存增长。
+        const val MAX_PENDING_EVENTS = 2000
     }
 }

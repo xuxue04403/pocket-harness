@@ -395,6 +395,7 @@ class LocalRunner {
     final Completer<void> done = Completer<void>();
     late StreamSubscription<LocalLine> sub;
     final StringBuffer stderr = StringBuffer();
+    final StringBuffer notes = StringBuffer();
     sub = host.lines.where((LocalLine line) => line.tag == tag).listen((
       LocalLine line,
     ) {
@@ -404,14 +405,22 @@ class LocalRunner {
         }
         final int code = line.code ?? 0;
         if (code != 0 && !allowFailure) {
+          final String note = notes.isEmpty ? '' : '（${notes.toString().trim()}）';
           done.completeError(
             LocalDshError(
-              '命令失败（$tag，退出码 $code）：${stderr.toString().trim()}',
+              '命令失败（$tag，退出码 $code）$note：${stderr.toString().trim()}',
             ),
           );
         } else {
           done.complete();
         }
+        return;
+      }
+      if (line.kind == 'dropped') {
+        // 原生侧在订阅断开期间只能保留最近若干行。这条说明不属于命令自己的
+        // 输出，但要让人知道「看到的不是全部」—— 否则一次长安装的输出看起来
+        // 像是突然从中间开始。
+        notes.writeln(line.line);
         return;
       }
       if (line.kind == 'stderr') {
