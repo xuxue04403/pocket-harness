@@ -77,6 +77,10 @@ struct Files {
   private link: LinkClient | null = null
   private ticketText: string = ''
   private sessionId: string = ''
+  /** 每次列目录都加一；过期的响应不回写（见 load）。 */
+  private loadSeq: number = 0
+  /** 同理，用于搜索：旧查询不能盖掉新查询的结果。 */
+  private searchSeq: number = 0
 
   aboutToAppear(): void {
     const params = router.getParams() as FilesParams
@@ -117,14 +121,20 @@ struct Files {
   private async load(): Promise<void> {
     const link = this.link
     if (link === null) return
+    // 连点两次目录时两条请求会同时在飞，谁先回来不确定。没有世代号的话，
+    // 慢的那条会把 `entries` 写成上一个目录的内容，而 `path` 已经显示新目录 ——
+    // 界面看起来像「这个目录里的文件不对」，其实只是响应乱序。
+    const mine = ++this.loadSeq
     this.error = ''
     try {
       const answer = await link.rpc.call('workspaceFiles/list',
         listRequest(this.sessionId, this.path), 20000)
+      if (this.loadSeq !== mine) return
       const listing = readListing(answer)
       this.entries = sortEntries(listing.entries)
       this.truncated = listing.truncated
     } catch (error) {
+      if (this.loadSeq !== mine) return
       this.error = describeError(error as Object)
       this.entries = []
     }
@@ -195,18 +205,23 @@ struct Files {
       this.submitted = ''
       return
     }
+    // 搜索也是「后发先至」的候选：一个 30 秒超时的请求完全可能比后一个慢。
+    const mine = ++this.searchSeq
     this.searching = true
     this.error = ''
     this.submitted = this.query.trim()
     try {
       const answer = await link.rpc.call('workspaceFiles/search',
         searchRequest(this.sessionId, this.submitted), 30000)
+      if (this.searchSeq !== mine) return
       this.matches = readMatches(answer)
     } catch (error) {
+      if (this.searchSeq !== mine) return
       this.error = describeError(error as Object)
       this.matches = []
+    } finally {
+      if (this.searchSeq === mine) this.searching = false
     }
-    this.searching = false
   }
 
   /** 搜索结果给的是相对工作区根的路径：打开它要把当前目录设成它的父目录。 */

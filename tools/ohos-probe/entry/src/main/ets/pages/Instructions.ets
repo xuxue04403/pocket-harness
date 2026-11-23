@@ -79,6 +79,8 @@ struct Instructions {
   private link: LinkClient | null = null
   private ticketText: string = ''
   private cwd: string = ''
+  /** 每次打开文件加一；过期的读取不回写（见 openFile）。 */
+  private openSeq: number = 0
 
   aboutToAppear(): void {
     const params = router.getParams() as InstructionsParams
@@ -133,11 +135,15 @@ struct Instructions {
   private async openFile(file: InstructionFile): Promise<void> {
     const link = this.link
     if (link === null) return
+    // 连点两个文件时，慢的那条回来会把 path 设成 A、正文设成 A 的文本，
+    // 而用户以为自己在看 B —— 更糟的是随后的保存会写回 A。
+    const mine = ++this.openSeq
     this.error = ''
     this.notice = ''
     try {
       const answer = await link.rpc.call('pocketInstructions/read',
         readInstructionRequest(file.path), 20000)
+      if (this.openSeq !== mine) return
       const text = readInstructionText(answer)
       this.editingPath = file.path
       this.editingName = file.name
@@ -147,6 +153,7 @@ struct Instructions {
       this.creating = false
       this.editing = true
     } catch (error) {
+      if (this.openSeq !== mine) return
       this.error = describeError(error as Object)
     }
   }

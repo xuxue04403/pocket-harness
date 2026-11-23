@@ -345,10 +345,11 @@ struct Chat {
       this.selection = selected
       this.modelLabel = routeLabel(this.catalog, selected)
       this.modelPanel = false
+      this.switching = false
     }).catch((error: Object) => {
       this.error = describeError(error)
+      this.switching = false
     })
-    this.switching = false
   }
 
   /**

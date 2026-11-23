@@ -82,7 +82,7 @@ hdc install -r entry-default-signed.hap
 
 不需要 macOS 就能验证的：
 
-- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1228 KB，内含 `ets/modules.abc` 780,700 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
+- **ArkTS 侧的真编译**：`hvigor` + `restool` + `ets-loader` + `es2abc` 已在本机跑通，产出 `entry-default-unsigned.hap`（1232 KB，内含 `ets/modules.abc` 781,896 字节）。这条路只能编原生代码，**编不了 Dart AOT**。
 - **协议核心也能编进 ArkTS**：`packages/dsh_arkts` 的 TypeScript 源码由 `build.ps1` 同步进 `entry/src/main/ets/core/` 后能通过 ArkTS 编译，`.abc` 里能搜到 `x25519`、`NoiseIkSession`、`LinkClient`、`runClientCheck`、`bad-proof`、`pocketharness` 等符号 —— 也就是说鸿蒙 App 可以完全不走 Dart，直接用这份协议核心连 Host。
 - **连接流程本身也被编过**：探针页的 `entry/src/main/ets/selfcheck.ts` 引用 `LinkClient` 并在页面里跑一遍 hello → Noise → RPC（内存管道扮演 Host）。**被引用这件事是关键**：不被引用就不会进编译图，ArkTS 也就不会检查它 —— 第一次接进去立刻报出 `client.ts` 里把 `hasRelay` 当属性读的真实 bug（Node 只擦类型不检查，中继分支因此长期静默失效）。
 - **鸿蒙的平台接口也接好了**：`entry/src/main/ets/platform.ohos.ts` 用 `@ohos.net.socket` 的 `constructTCPSocketInstance` 实现 `FrameTransport`、用 `cryptoFramework.createRandom().generateRandomSync` 实现 `RandomSource`，页面上的第三个按钮可以粘贴配对码 + `host:port` 去连真实的 Host。这份文件不参与 Node 测试（esbuild 解析不了 `@ohos.*`），所以里面的字节处理全部下沉到 `src/framing.ts` —— 15 条断言在 Node 里跑，鸿蒙侧用的正是同一份代码。
@@ -124,7 +124,7 @@ npm install --registry=https://repo.harmonyos.com/npm `
 .\build.ps1                      # 也可以用 -Sdk 指定；不给就读 OHOS_BASE_SDK_HOME / DEVECO_SDK_HOME
 ```
 
-产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,256,221 字节）与 `entry-default-signed.hap`（1,298,688 字节，`verify: Verify success`）。
+产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`（1,258,281 字节）与 `entry-default-signed.hap`（1,301,589 字节，`verify: Verify success`）。
 
 CI 里的 `harmony` job 走的就是这一条，且是手动触发（`workflow_dispatch`）：它会先检查 `OHOS_BASE_SDK_HOME` / `DEVECO_SDK_HOME` 下有没有摆好的 SDK，没有就把上面第 2 步的布局要求打出来并失败，不会假装构建成功。
 
@@ -435,6 +435,24 @@ mediaType, bytes, width, height}}`，**没有任何字节** —— Host 把字�
 
 这类「消费方被换掉但生产方还在写」的问题在任何长流上都可能出现，判据是：**这个循环有没有
 一个不是「流结束」的退出条件**。没有的话，它一定会在某个交互路径上变成幽灵写入者。
+
+同一个坑在**普通的请求/响应**上也会出现，只是症状更像「数据不对」而不是「卡住」：工作区
+文件页连点两次目录，两条 `workspaceFiles/list` 同时在飞，慢的那条回来时 `path` 已经指向新
+目录，它却把 `entries` 写成了旧目录的内容 —— 界面显示的是「新目录 + 旧文件列表」。修法仍然
+是世代号（`loadSeq`、`searchSeq`），每次发请求前加一，回来先比一次。
+
+指令文件页有更难受的版本：`openFile` 连点两个文件，慢的那条回来会把 `editingPath` 设成 A、
+正文设成 A 的文本，而用户以为自己在看 B；如果此时按了保存，就会把 B 的内容写回 A。这一处
+也用世代号（`openSeq`）。
+
+还有一类是**重复提交**而不是乱序：设置页的 `pickModel` 连点两次会发两次
+`settings/update`，两次带同一个 `expectedRevision`，第二次必然回 `settings/conflict` ——
+第一次明明已经改成功，界面却报冲突。这一处用既有的 `saving` 标志挡住，并注意把标志的清除
+放进 `then`/`catch` 两侧（放在 `call()` 之后会立刻执行，等于没挡）。`Chat.ets` 的
+`pickModel` 原来就是「立刻清标志」，同一处一并改掉。
+
+两条判据：**一次交互会发出第二个请求时，第一个请求的响应就必须能被识别出来并丢弃**；
+**同一个动作会被点第二下时，第一下没回来之前不能再发**。
 
 ### agent 的计划：`null` 与空数组是两件事
 

@@ -143,6 +143,9 @@ struct Settings {
   private async pickModel(choice: ModelChoice): Promise<void> {
     const link = this.link
     const model = findNamespace(this.snapshot, DEFAULT_MODEL_NS)
+    // 连点两次会发两次 settings/update，第二次带的是同一个 expectedRevision，
+    // 于是必然回一个「冲突」—— 明明第一次已经改成功了，界面却报错。
+    if (this.saving) return
     if (link === null || model === null) return
     this.saving = true
     this.error = ''
