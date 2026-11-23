@@ -135,7 +135,7 @@ node run.mjs          # 监听 8080，/healthz 可探活
 # Dart 协议层：49 个测试
 cd packages\dsh_link; dart analyze; dart test
 
-# Host 插件与中继：40 个测试
+# Host 插件与中继：41 个测试
 cd relay; npm install; cd ..      # 中继的测试会 import relay/server.mjs，它依赖 ws
 node --test host
 
@@ -187,6 +187,7 @@ CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作�
 - 所有业务数据走 Noise IK（`Noise_IK_25519_ChaChaPoly_SHA256`）端到端加密；中继与局域网中间设备只见密文。
 - 设备私钥只存在电脑的 DSH credentials 服务与手机的应用私有目录里，不进日志、不落明文文件。
 - 对端公钥按设备固定，变化即拒绝握手，需人工确认才能重新配对。
+- 手机上能改的指令文件按**真实路径**判定范围：项目里一个指向外部的目录链接不能用来把 `AGENTS.md` 写到项目外面——`resolve()` 只看字符串，链接要单独跟随。
 - 工具审批沿用 Harness 自身语义：只有「允许一次」与「拒绝」，其余一律 fail-closed。
 - 审批与提问由手机作为 owner Peer 抢占 DSH 的 `$events` 转发流；同一时刻只有一端能回答，答不上可以一键转回电脑。
 - 明文 TCP 只承载密文帧；公网走 `wss://`。
