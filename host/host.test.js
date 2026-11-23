@@ -20,6 +20,7 @@ import { open, seal } from './chacha20_poly1305.js'
 import { encodeEnvelope, envelope } from './envelope.js'
 import { LinkServer } from './link.js'
 import { RpcServer } from './rpc.js'
+import { sameProof } from './index.js'
 
 test('credential keys mirror the credentials service rules', () => {
   assert.equal(credentialKey('dsh-pocketharness-host', 'identity'), 'dsh-pocketharness-host/identity')
@@ -248,4 +249,25 @@ test('an explicitly configured port fails loudly when it is taken', async () => 
     await second.server.close()
     await first.server.close()
   }
+})
+test('a pairing proof is accepted only when it matches the expected one', () => {
+  // This pins the *result* of the comparison, not its cost: no unit test can
+  // measure constant-timeness reliably, so that property rests on sameProof`n  // routing every equal-length case through `timingSafeEqual` rather than on
+  // these assertions. What is worth pinning here is the edge behaviour a future
+  // refactor could get wrong: a difference in the last character must still be
+  // rejected exactly like one in the first, and non-strings must never reach the
+  // compare at all.
+  const expected = 'A'.repeat(43)
+  assert.equal(sameProof(expected, expected), true)
+  // Wrong only at the last character: a short-circuiting compare returns after
+  // one character, a constant-time one still walks all 43.
+  assert.equal(sameProof(`${'A'.repeat(42)}B`, expected), false)
+  // Wrong at the first character: the same amount of work must happen here.
+  assert.equal(sameProof(`B${'A'.repeat(42)}`, expected), false)
+  // Length is the one thing that may be checked early — every proof is 43 chars.
+  assert.equal(sameProof('A'.repeat(42), expected), false)
+  assert.equal(sameProof('A'.repeat(44), expected), false)
+  // A non-string never reaches the compare at all.
+  assert.equal(sameProof(undefined, expected), false)
+  assert.equal(sameProof(12345, expected), false)
 })

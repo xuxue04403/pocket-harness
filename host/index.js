@@ -12,7 +12,7 @@
 // Deliberately free of `@deepseek-ai/*` imports: those only resolve inside the
 // running Harness, so avoiding them keeps this file testable from plain node.
 
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { networkInterfaces } from 'node:os'
 
 import { credentialKey } from './credentials-key.js'
@@ -394,7 +394,13 @@ class HostState {
       return { ok: false, reason: 'pairing-expired' }
     }
     const expected = pairingProof(pairing.secret, connectionId, clientDeviceId).toString('base64url')
-    if (proof.length !== expected.length || proof !== expected) return { ok: false, reason: 'bad-proof' }
+    // Constant time, for the same reason the relay compares its token that way:
+    // `!==` on strings stops at the first differing character, so a caller willing
+    // to time a few thousand attempts can recover the expected proof one byte at a
+    // time and then replay it. Equal lengths are required by timingSafeEqual, and
+    // are themselves not a secret — every proof this Host accepts is 43 base64url
+    // characters long.
+    if (!sameProof(proof, expected)) return { ok: false, reason: 'bad-proof' }
 
     return {
       ok: true,
@@ -429,6 +435,26 @@ class HostState {
     }, 'pocket-harness: phone Peer lifetime')
     return peer
   }
+}
+
+/**
+ * Compares a pairing proof with the one this Host expects, in constant time.
+ *
+ * `timingSafeEqual` needs equal lengths, so the length check comes first. That
+ * check is safe to be early: every proof is a base64url HMAC-SHA256 digest and
+ * therefore always 43 characters, so the length tells an attacker nothing about
+ * the value.
+ *
+ * Exported so a test can pin the edge cases a refactor could break: a difference
+ * in the last character must be rejected exactly like one in the first, and a
+ * non-string must never reach the compare at all.
+ */
+export function sameProof(actual, expected) {
+  if (typeof actual !== 'string') return false
+  const left = Buffer.from(actual, 'utf8')
+  const right = Buffer.from(expected, 'utf8')
+  if (left.length !== right.length) return false
+  return timingSafeEqual(left, right)
 }
 
 /**

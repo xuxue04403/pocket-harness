@@ -135,7 +135,7 @@ node run.mjs          # 监听 8080，/healthz 可探活
 # Dart 协议层：49 个测试
 cd packages\dsh_link; dart analyze; dart test
 
-# Host 插件与中继：35 个测试
+# Host 插件与中继：36 个测试
 cd relay; npm install; cd ..      # 中继的测试会 import relay/server.mjs，它依赖 ws
 node --test host
 
@@ -191,6 +191,7 @@ CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作�
 - 审批与提问由手机作为 owner Peer 抢占 DSH 的 `$events` 转发流；同一时刻只有一端能回答，答不上可以一键转回电脑。
 - 明文 TCP 只承载密文帧；公网走 `wss://`。
 - 分片消息按头部声明的总长**逐片结算**，超出上限（4 MiB）立即丢弃整条：缓冲量由声明约束，而不是由对端愿意发多少决定。
+- 配对口令的校验走 `timingSafeEqual`：字符串 `!==` 会在第一个不同的字符处停下，可被计时逐步还原，而这串值一旦泄漏就能重放。
 
 发现安全问题请私下联系维护者，不要先开公开 issue。
 
