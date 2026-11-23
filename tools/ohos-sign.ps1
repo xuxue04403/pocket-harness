@@ -143,11 +143,26 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutFile)) {
 }
 
 # 4. 回验一次，别把签坏的东西交出去。
+#
+# 判据是退出码，不是「有没有输出」。hap-sign-tool 会往 stderr 打
+# `WARN - Missing parameter: outproof` 这类无害提示，而 PowerShell 5.1 在
+# `$ErrorActionPreference = 'Stop'` 下会把原生命令的 stderr 包成
+# NativeCommandError 直接终止脚本 —— 于是签名明明成功、脚本却报失败。
 $outChain = Join-Path $work 'verify-chain.cer'
 $outProfile = Join-Path $work 'verify-profile.p7b'
-$verify = & $java -jar $signTool verify-app -inFile $OutFile -outCertChain $outChain -outProfile $outProfile 2>&1
-if ($LASTEXITCODE -ne 0) {
-    throw "verify-app 失败：$($verify -join ' ')"
+$verifyExit = 0
+$verifyText = ''
+$previous = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $verifyText = (& $java -jar $signTool verify-app -inFile $OutFile `
+        -outCertChain $outChain -outProfile $outProfile 2>&1 | Out-String)
+    $verifyExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previous
+}
+if ($verifyExit -ne 0) {
+    throw "verify-app 失败（退出码 $verifyExit）：$($verifyText.Trim())"
 }
 
 $size = (Get-Item -LiteralPath $OutFile).Length
