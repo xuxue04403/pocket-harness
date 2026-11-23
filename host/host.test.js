@@ -271,3 +271,47 @@ test('a pairing proof is accepted only when it matches the expected one', () => 
   assert.equal(sameProof(undefined, expected), false)
   assert.equal(sameProof(12345, expected), false)
 })
+test('stream opens that are still waiting on the gateway count against the limit', async () => {
+  // `link/stream.open` awaits the gateway before the stream exists, so a ceiling
+  // that only counted live streams would let a client ask for a hundred at once:
+  // every request checks a map that is still empty and every request passes. The
+  // slot has to be reserved before the await.
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const sent = []
+  const channel = new EventEmitter()
+  channel.send = bytes => sent.push(JSON.parse(Buffer.from(bytes).toString('utf8')))
+  // Each generator parks on `hold`, so the streams stay open after the gateway
+  // answers — otherwise they would finish immediately and `openStreams` would be
+  // zero either way, which cannot tell the ceiling from its absence.
+  let letGo
+  const hold = new Promise(resolve => { letGo = resolve })
+  const gateway = {
+    invoke: async () => ({}),
+    stream: async () => { await gate; return (async function* () { await hold; yield { n: 1 } })() },
+    dispatch: async () => ({ ok: true, value: {} }),
+    open: async () => (async function* () { yield { type: 'ready' } })(),
+  }
+  const server = new RpcServer({ channel, gateway, peer: { id: 'peer' } })
+  const open = id => channel.emit('message', encodeEnvelope(envelope({
+    type: 'request',
+    id,
+    payload: { endpoint: 'link/stream.open', payload: { args: { endpoint: 'session/list', args: {} } } },
+  })))
+
+  for (let index = 0; index < 40; index += 1) open(`open-${index}`)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  // Only MAX_STREAMS of the forty may be waiting; the rest must be refused at once.
+  const refused = sent.filter(entry => entry.type === 'error')
+  const waiting = sent.filter(entry => entry.id === undefined && entry.type === 'response')
+  assert.equal(waiting.length, 0, 'a stream must not be acknowledged before the gateway answers')
+  assert.equal(refused.length, 40 - 16, `expected 24 refusals, saw ${refused.length}`)
+  assert.equal(refused[0].payload.code, 'STREAM_LIMIT')
+
+  release()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  // Once the gateway answers, exactly MAX_STREAMS streams exist — not forty.
+  assert.equal(server.openStreams, 16, `expected 16 open streams, saw ${server.openStreams}`)
+  letGo()
+  await server.close()
+})

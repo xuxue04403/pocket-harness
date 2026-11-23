@@ -32,6 +32,9 @@ export class RpcServer extends EventEmitter {
   #peer
   #streams = new Map()
   #nextStreamId = 1
+  // Opens that passed the ceiling check and are still waiting for the gateway to
+  // hand back a source. Counted separately because they are not in #streams yet.
+  #pendingOpens = 0
   #closed = false
   #inflight = new Set()
 
@@ -144,12 +147,10 @@ export class RpcServer extends EventEmitter {
   }
 
   async #openStream(id, args) {
-    if (this.#streams.size >= MAX_STREAMS) {
-      this.#sendError(id, 'STREAM_LIMIT', `at most ${MAX_STREAMS} streams may be open`)
-      return
-    }
+    if (!this.#reserveStreamSlot(id)) return
     const endpoint = args?.endpoint
     if (typeof endpoint !== 'string') {
+      this.#pendingOpens -= 1
       this.#sendError(id, 'PROTOCOL_ERROR', 'stream.open needs an endpoint')
       return
     }
@@ -159,6 +160,7 @@ export class RpcServer extends EventEmitter {
     }
     const split = splitEndpoint(endpoint)
     if (split === null) {
+      this.#pendingOpens -= 1
       this.#sendError(id, 'PROTOCOL_ERROR', `the endpoint ${endpoint} is not namespace/method`)
       return
     }
@@ -172,10 +174,13 @@ export class RpcServer extends EventEmitter {
         peer: this.#peer,
         signal: aborter.signal,
       })
+      this.#pendingOpens -= 1
+      if (this.#closed) return
       streamId = this.#nextStreamId++
       this.#streams.set(streamId, { aborter, source })
       this.#sendResponse(id, { streamId })
     } catch (error) {
+      this.#pendingOpens -= 1
       this.#sendFailure(id, error)
       return
     }
@@ -185,6 +190,7 @@ export class RpcServer extends EventEmitter {
   /** Opens a Gateway-internal stream such as `$events` through the carrier seam. */
   async #openGatewayStream(id, endpoint, args) {
     if (typeof this.#gateway.open !== 'function') {
+      this.#pendingOpens -= 1
       this.#sendError(id, 'UNSUPPORTED', 'this Host does not expose gateway streams')
       return
     }
@@ -192,14 +198,36 @@ export class RpcServer extends EventEmitter {
     let streamId
     try {
       const source = await this.#gateway.open(endpoint, { args: args?.args ?? {} }, aborter.signal)
+      this.#pendingOpens -= 1
+      if (this.#closed) return
       streamId = this.#nextStreamId++
       this.#streams.set(streamId, { aborter, source })
       this.#sendResponse(id, { streamId })
     } catch (error) {
+      this.#pendingOpens -= 1
       this.#sendFailure(id, error)
       return
     }
     void this.#pump(streamId, this.#streams.get(streamId))
+  }
+
+  /**
+   * Claims one stream slot, counting opens whose source is not ready yet.
+   *
+   * The ceiling has to cover in-flight opens as well as live streams: `open` awaits
+   * the gateway, so a client that asks for many streams at once would pass a check
+   * that only counted `#streams` — every one of them sees a map that is still small
+   * — and then fill it past the limit once the gateway answers. Each caller reserves
+   * before awaiting and releases if it fails, so the count never exceeds the true
+   * number of outstanding streams.
+   */
+  #reserveStreamSlot(id) {
+    if (this.#streams.size + this.#pendingOpens >= MAX_STREAMS) {
+      this.#sendError(id, 'STREAM_LIMIT', `at most ${MAX_STREAMS} streams may be open`)
+      return false
+    }
+    this.#pendingOpens += 1
+    return true
   }
 
   async #pump(streamId, record) {
