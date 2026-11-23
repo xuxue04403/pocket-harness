@@ -103,6 +103,10 @@ probe/_tp.sh
 dist/
 # 本地发布凭据：任何情况下都不入库
 probe/_gh_token.txt
+# 发版时临时装的东西（isomorphic-git、npm 缓存、一次性脚本）：几十 MB，且随时可重装
+probe/_publisher/
+probe/_npmcache/
+probe/_*.mjs
 # 手工验证本机 dsh 时的临时脚本与截图（设备侧验证用，不入库）
 probe/_*.sh
 probe/_u.xml

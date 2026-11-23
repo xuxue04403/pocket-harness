@@ -4,6 +4,9 @@
 
 **当前版本：v0.1.0-beta**（范围只有「远程操控电脑」，更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
+安装包：[release 页](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.0-beta) ·
+源码：`git clone https://github.com/xuxue04403/pocket-harness.git`
+
 工作区、智能体运行时与会话历史全部留在电脑上，手机只是一扇窗：扫一次码完成配对，之后就能在外面列会话、读记录、发提示词——同一个局域网里直连，跨网络时走你自己部署的中继。
 
 数据不经过任何第三方服务器。没有账号体系，没有托管的中转，也没有遥测。
@@ -67,14 +70,19 @@
 ### 0. 拿到代码
 
 ```bash
-git clone <本仓库地址> pocket-harness
+git clone https://github.com/xuxue04403/pocket-harness.git
+cd pocket-harness
 ```
 
-仓库还没有公开的远端（正在发布 v0.1.0-beta），可以先从 release 附件里的
-`pocket-harness-0.1.0-beta.bundle` 离线克隆，里面有完整历史与 `v0.1.0-beta` 标签：
+默认分支是 `master`。预编译包在
+[v0.1.0-beta release](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.0-beta) 页。
+
+没网或者只想要离线副本时，release 附件里还有一个 `pocket-harness-0.1.0-beta.bundle`，
+里面是完整历史与 `v0.1.0-beta` 标签，可以不联网直接克隆出来构建：
 
 ```bash
 git clone pocket-harness-0.1.0-beta.bundle pocket-harness
+git bundle verify pocket-harness-0.1.0-beta.bundle   # 校验完整历史
 ```
 
 ### 1. 在电脑上装 Host 插件
@@ -181,6 +189,21 @@ cd packages/dsh_arkts; npm run test:live
 设计细节见 [docs/superpowers/specs/2026-11-20-pocket-harness-design.md](docs/superpowers/specs/2026-11-20-pocket-harness-design.md)。
 
 CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作业分别跑 Dart 协议层、Host 插件与中继、TypeScript 协议层、Flutter 客户端（含 `flutter build apk --debug`）。第五份是鸿蒙打包，**手动触发**：它在 `windows-latest` 上检查有没有摆好的 OpenHarmony SDK，有就真编译并签名、把 HAP 当产物上传，没有就打印 SDK 的布局要求并失败（CI 上不缓存 3 GB SDK，所以没有替它下载）。详见打包文档。
+
+### 发版
+
+发布脚本只用 Node 的 HTTPS（理由见 [tools/publish-git.mjs](tools/publish-git.mjs) 顶部：本机 git 走 schannel，沙箱里拿不到客户端凭证）。先把要发的 APK 等产物放进 `dist/<tag>/`，连同 `RELEASE_NOTES.md` 和 `SHA256SUMS.txt`，然后：
+
+```powershell
+$env:POCKET_HARNESS_TOKEN_FILE = "probe/_gh_token.txt"   # 细粒度 PAT，需 Contents 读写
+node tools/publish-git.mjs     --owner <账号> --branch master --tag v0.1.0-beta
+node tools/publish-release.mjs --owner <账号> --tag v0.1.0-beta
+```
+
+两个脚本都是幂等的：远端已经一致就跳过，release 已存在就只补缺失的附件。
+
+`publish-git.mjs` 对分支和 tag 走两条路，这点值得单说：isomorphic-git 的 push 只处理 `refs/heads/*`，refspec 里写 `refs/tags/x:refs/tags/x` 会被**静默忽略**（返回体里连这个 ref 都不出现，而 `ok: true`），而 REST 的建 ref 又要求那个 tag 对象先存在于远端。所以脚本按 git 线上协议手工发一次 `receive-pack`，把注解 tag 本体作为单对象 packfile 推上去——远端得到的 sha 与本地逐字节相同，`git clone --branch v0.1.0-beta` 才对得上。
+
 
 ## 安全
 
