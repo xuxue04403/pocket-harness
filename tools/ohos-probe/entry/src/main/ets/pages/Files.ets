@@ -81,6 +81,8 @@ struct Files {
   private loadSeq: number = 0
   /** 同理，用于搜索：旧查询不能盖掉新查询的结果。 */
   private searchSeq: number = 0
+  /** 每次打开或续读文本文件都加一；过期的读取不回写（见 openTextFile）。 */
+  private openSeq: number = 0
 
   aboutToAppear(): void {
     const params = router.getParams() as FilesParams
@@ -158,30 +160,38 @@ struct Files {
   private async openTextFile(name: string): Promise<void> {
     const link = this.link
     if (link === null) return
+    // 连点两个文件时，慢的那条回来会把正文换成 A 的内容，而标题已经写着 B。
+    // 更糟的是此后再点「读更多」，offset 会从 A 的末尾算起，往 B 里拼 A 的后半段。
+    const mine = ++this.openSeq
     this.reading = true
     this.error = ''
     try {
       const target = childPath(this.path, name)
       const answer = await link.rpc.call('workspaceFiles/read',
         readRequest(this.sessionId, target, 1, DEFAULT_READ_LINES), 20000)
+      if (this.openSeq !== mine) return
       this.page = readFileText(answer)
       this.fileName = name
       this.openFile = true
     } catch (error) {
+      if (this.openSeq !== mine) return
       this.error = describeError(error as Object)
     }
-    this.reading = false
+    if (this.openSeq === mine) this.reading = false
   }
 
   /** 只续读，不重来：分页的意义就是几千行的文件也能在手机上翻。 */
   private async readMore(): Promise<void> {
     const link = this.link
     if (link === null) return
+    const mine = this.openSeq
     this.reading = true
     try {
       const target = childPath(this.path, this.fileName)
       const answer = await link.rpc.call('workspaceFiles/read',
         readRequest(this.sessionId, target, nextOffset(this.page), DEFAULT_READ_LINES), 20000)
+      // 续读途中有别的文件被打开，这批字节属于上一个文件，丢掉。
+      if (this.openSeq !== mine) return
       const more = readFileText(answer)
       this.page = {
         absolutePath: more.absolutePath,
@@ -192,9 +202,10 @@ struct Files {
         eof: more.eof,
       }
     } catch (error) {
+      if (this.openSeq !== mine) return
       this.error = describeError(error as Object)
     }
-    this.reading = false
+    if (this.openSeq === mine) this.reading = false
   }
 
   private async search(): Promise<void> {
