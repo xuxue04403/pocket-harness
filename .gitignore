@@ -122,6 +122,8 @@ probe/_keys/
 probe/_qr_tables.txt
 # 读 asar 内部实现时写的一次性探针（要 ELECTRON_RUN_AS_NODE 才跑得起来），不是交付物
 probe/_*.cjs
+# 提交信息草稿：heredoc 在 pwsh 里不可用，只能先落文件再 -F
+probe/_commit_msg.txt
 probe/_ts_files.txt
 probe/_vps_*
 probe/_ph_deploy_key*
