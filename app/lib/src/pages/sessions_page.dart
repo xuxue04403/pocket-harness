@@ -2,6 +2,7 @@ import 'package:dsh_link/dsh_link.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../dsh/host_link.dart';
+import '../dsh/session_groups.dart';
 import '../storage/host_store.dart';
 import 'chat_page.dart';
 import 'new_session_sheet.dart';
@@ -34,6 +35,10 @@ class _SessionsPageState extends State<SessionsPage> {
 
   /// The last list the Host returned, so the search page can name its hits.
   List<SessionSummary> _loaded = const [];
+
+  /// Projects the person folded shut. Kept by directory rather than by index so
+  /// a refresh that reorders the tree does not open what was just closed.
+  final Set<String> _collapsed = <String>{};
 
   @override
   void initState() {
@@ -121,7 +126,7 @@ class _SessionsPageState extends State<SessionsPage> {
     try {
       final id = await link.createSession(cwd: choice.cwd, agentPreset: choice.agentPreset);
       if (!mounted) return;
-      await _open(id, choice.cwd == null ? '新建会话' : _basename(choice.cwd!), cwd: choice.cwd);
+      await _open(id, choice.cwd == null ? '新建会话' : basename(choice.cwd!), cwd: choice.cwd);
       _refresh();
     } on Object catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(_describe(error))));
@@ -198,6 +203,12 @@ class _SessionsPageState extends State<SessionsPage> {
     }
   }
 
+  void _toggle(String key) {
+    setState(() {
+      if (!_collapsed.remove(key)) _collapsed.add(key);
+    });
+  }
+
   @override
   void dispose() {
     final link = _link;
@@ -264,31 +275,19 @@ class _SessionsPageState extends State<SessionsPage> {
           if (sessions.isEmpty) {
             return _NoSessions(onCreate: _link == null ? null : _create);
           }
+          final groups = groupSessionsByProject(sessions);
           return RefreshIndicator(
             onRefresh: _refresh,
-            child: ListView.separated(
-              itemCount: sessions.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final session = sessions[index];
-                return ListTile(
-                  leading: session.running
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.chat_bubble_outline),
-                  title: Text(session.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(
-                    session.cwd ?? _relative(session.updatedAt),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  onTap: () => _open(session.sessionId, session.title, cwd: session.cwd),
-                  onLongPress: () => _rename(session),
-                );
-              },
+            child: ListView.builder(
+              itemCount: groups.length,
+              itemBuilder: (context, index) => _ProjectSection(
+                group: groups[index],
+                collapsed: _collapsed.contains(groups[index].key),
+                onToggle: () => _toggle(groups[index].key),
+                onOpen: (session) =>
+                    _open(session.sessionId, session.title, cwd: session.cwd),
+                onRename: _rename,
+              ),
             ),
           );
         },
@@ -314,12 +313,148 @@ String _relative(DateTime time) {
 
 String _two(int value) => value.toString().padLeft(2, '0');
 
-/// The last path segment, for a chat title that fits on one line.
-String _basename(String path) {
-  final trimmed = path.endsWith(r'\') || path.endsWith('/') ? path.substring(0, path.length - 1) : path;
-  final cut = trimmed.lastIndexOf(RegExp(r'[\\/]'));
-  final name = cut == -1 ? trimmed : trimmed.substring(cut + 1);
-  return name.isEmpty ? trimmed : name;
+/// One project header with its sessions underneath.
+///
+/// The desktop groups sessions by project; the phone's flat list did not, so
+/// four sessions from four folders looked like one undifferentiated wall of
+/// "未命名会话". A section keeps the folder visible once and lets its sessions
+/// be scanned without repeating the path on every row.
+class _ProjectSection extends StatelessWidget {
+  const _ProjectSection({
+    required this.group,
+    required this.collapsed,
+    required this.onToggle,
+    required this.onOpen,
+    required this.onRename,
+  });
+
+  final SessionGroup group;
+  final bool collapsed;
+  final VoidCallback onToggle;
+  final void Function(SessionSummary session) onOpen;
+  final void Function(SessionSummary session) onRename;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: onToggle,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 12, 12, 8),
+            child: Row(
+              children: [
+                Icon(
+                  collapsed ? Icons.chevron_right : Icons.expand_more,
+                  size: 20,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                Icon(
+                  group.key.isEmpty ? Icons.inbox_outlined : Icons.folder_outlined,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    group.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                if (group.running > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                Text(
+                  '${group.sessions.length}',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // The full path under the header: two projects can share a folder name
+        // ("src", "app"), and then only the path tells them apart.
+        if (group.key.isNotEmpty && !collapsed)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(44, 0, 16, 6),
+            child: Text(
+              group.key,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        if (!collapsed)
+          ...group.sessions.map(
+            (session) => _SessionRow(
+              session: session,
+              onTap: () => onOpen(session),
+              onLongPress: () => onRename(session),
+            ),
+          ),
+        const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+/// One session inside a project.
+class _SessionRow extends StatelessWidget {
+  const _SessionRow({
+    required this.session,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final SessionSummary session;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.only(left: 44, right: 16),
+      leading: session.running
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(
+              Icons.chat_bubble_outline,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+      title: Text(session.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        // The folder is on the header now, so the row only has to say when.
+        _relative(session.updatedAt),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onTap: onTap,
+      onLongPress: onLongPress,
+    );
+  }
 }
 
 class _RenameDialog extends StatefulWidget {

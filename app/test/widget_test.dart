@@ -7,6 +7,9 @@ import 'package:pocket_harness/src/dsh/host_link.dart';
 import 'package:pocket_harness/src/dsh/instruction_paths.dart';
 import 'package:pocket_harness/src/dsh/outgoing_image.dart';
 import 'package:pocket_harness/src/dsh/questions.dart';
+// The grouping is plain Dart, deliberately separate from the page: importing
+// the page here would drag Flutter widgets into a test that does not need them.
+import 'package:pocket_harness/src/dsh/session_groups.dart';
 import 'package:pocket_harness/src/dsh/tool_labels.dart';
 
 /// Transcript rendering is the one piece of the phone UI with real logic, and
@@ -145,6 +148,72 @@ void main() {
     test('rejects an entry without a session id', () {
       expect(SessionSummary.fromJson({'updatedAt': 0}), isNull);
       expect(SessionSummary.fromJson('not a map'), isNull);
+    });
+  });
+
+  group('groupSessionsByProject', () {
+    SessionSummary session(String id, String? cwd, int updatedAt, {bool running = false}) =>
+        SessionSummary(
+          sessionId: id,
+          title: id,
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt),
+          running: running,
+          cwd: cwd,
+        );
+
+    test('puts each directory in its own section', () {
+      final groups = groupSessionsByProject([
+        session('a', r'D:\IDE\dsh-bot', 3000),
+        session('b', r'D:\IDE\UU', 2000),
+        session('c', r'D:\IDE\dsh-bot', 1000),
+      ]);
+
+      expect(groups.map((group) => group.key), [r'D:\IDE\dsh-bot', r'D:\IDE\UU']);
+      expect(groups.first.sessions.map((s) => s.sessionId), ['a', 'c']);
+    });
+
+    test('orders sections by their newest session, not by member order', () {
+      // The Host sorts by activity, so the first row belongs to the newest
+      // project — but bucketing reorders the members, and the sections have to
+      // come out in the same order regardless.
+      final groups = groupSessionsByProject([
+        session('old', r'D:\one', 1000),
+        session('newest', r'D:\two', 9000),
+        session('middle', r'D:\three', 5000),
+      ]);
+
+      expect(groups.map((group) => group.key), [r'D:\two', r'D:\three', r'D:\one']);
+    });
+
+    test('collects sessions without a directory at the bottom', () {
+      // A stale session with no directory must not push a real project down
+      // just because it was touched a second ago.
+      final groups = groupSessionsByProject([
+        session('orphan', null, 9999),
+        session('blank', '', 9998),
+        session('real', r'D:\work', 1),
+      ]);
+
+      expect(groups.first.key, r'D:\work');
+      expect(groups.last.key, '');
+      expect(groups.last.sessions.map((s) => s.sessionId), ['orphan', 'blank']);
+      expect(groups.last.label, '未指定目录');
+    });
+
+    test('labels a section with its folder name and counts what is running', () {
+      final groups = groupSessionsByProject([
+        session('a', r'D:\IDE\dsh-bot', 1000, running: true),
+        session('b', r'D:\IDE\dsh-bot', 900, running: true),
+        session('c', r'D:\IDE\dsh-bot', 800),
+      ]);
+
+      expect(groups.single.label, 'dsh-bot');
+      expect(groups.single.running, 2);
+      expect(groups.single.sessions, hasLength(3));
+    });
+
+    test('returns nothing for an empty list', () {
+      expect(groupSessionsByProject(const []), isEmpty);
     });
   });
 

@@ -16,12 +16,13 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { networkInterfaces } from 'node:os'
 
 import { credentialKey } from './credentials-key.js'
-import { createTicket, encodeTicket, PAIRING_TICKET_TTL_MS } from './pairing.js'
+import { createTicket, encodeTicket, PAIRING_TICKET_TTL_MS, ticketToJson } from './pairing.js'
 import { INSTRUCTIONS_NAMESPACE, serveInstructions } from './instructions.js'
 import { LinkServer, pairingProof } from './link.js'
 import { newDeviceId } from './ids.js'
 import { x25519PrivateToPublic } from './noise.js'
 import { RelayDialer } from './relay-client.js'
+import { encodeMatrix } from './qr_encode.js'
 
 export const name = 'pocket-harness'
 
@@ -34,6 +35,15 @@ const DEFAULT_PORT = 48100
 /** How the Host stores its own state inside the credentials service. */
 const RECORD_SCOPE = 'dsh-pocketharness-host'
 const RECORD_ID = 'identity'
+
+/**
+ * Where the pairing code is served.
+ *
+ * Under `/api/` like the other first-party routes, because that prefix is where the
+ * shell's shared connection already applies its Host and Origin checks and its
+ * browser authentication — a route outside it would have to re-earn all three.
+ */
+const PAGE_PATH = '/api/pocket-harness/pair'
 
 /**
  * Starts the Host side of Pocket Harness.
@@ -174,6 +184,28 @@ export function apply(ctx, config = {}) {
     .catch(error => {
       ctx.logger?.warn?.(`pocket-harness: could not start the link server (${error.message})`)
     })
+
+  // Lets the phone page show the current code instead of people fishing the log
+  // out of a terminal. The route only serves loopback: the code contains the
+  // pairing secret, so anything that can read it can pair a new phone.
+  //
+  // A host without a web server is a legitimate deployment — the link listener is
+  // the whole point of this plugin, and the page is a convenience — so a missing
+  // service is not an error here, and neither is a bare test context that has no
+  // `inject` to ask it through.
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['webServer'], host => {
+      host.effect(
+        () =>
+          host.webServer.register({
+            kind: 'exact',
+            path: PAGE_PATH,
+            handler: (request, response) => servePage(state, request, response),
+          }),
+        'pocket-harness: pairing page',
+      )
+    })
+  }
 }
 
 /**
@@ -288,6 +320,16 @@ class HostState {
   #relayToken
   #loaded = null
 
+  /**
+   * The most recent ticket, kept so the phone page can render it.
+   *
+   * It is a separate copy rather than a second read of the credentials record on
+   * purpose: the page asks whenever it repaints, and re-deriving a ticket (which
+   * mints a new secret when the old one lapsed) on every paint would rotate the
+   * code out from under a phone that is already scanning.
+   */
+  #ticket = null
+
   constructor(ctx, { hostName, relayUrl = null, relayToken = null } = {}) {
     this.#ctx = ctx
     this.#hostName = hostName
@@ -398,7 +440,7 @@ class HostState {
       relay.relayRoom = await this.relayRoom()
       relay.relayToken = this.relayToken()
     }
-    return createTicket({
+    const ticket = createTicket({
       hostDeviceId: identity.deviceId,
       hostPublicKey: identity.publicKey,
       hostName: this.#hostName,
@@ -407,6 +449,20 @@ class HostState {
       pairingSecret: record.pairing.secret,
       ttlMs: record.pairing.expiresAt - now,
     })
+    // Remembered so the phone page can show the code the log just showed, without
+    // minting a second one whose secret would immediately supersede this one.
+    this.#ticket = ticket
+    return ticket
+  }
+
+  /**
+   * The code most recently published, or null before the first one.
+   *
+   * Read-only by design: a page that repaints every second must not be able to
+   * rotate the secret just by looking at it.
+   */
+  get latestTicket() {
+    return this.#ticket
   }
   /**
    * Decides whether an inbound hello may proceed.
@@ -521,4 +577,257 @@ function lanEndpoints(port) {
     }
   }
   return [...addresses].map(address => `${address}:${port}`)
+}
+
+/**
+ * Loopback only.
+ *
+ * The page contains the pairing secret: anything that can read it can pin a phone
+ * of its own, so it is not offered to the network the Host is listening on. A
+ * person at the keyboard reaches it through `127.0.0.1` from the Web GUI anyway.
+ */
+const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+
+function isLoopbackHost(request) {
+  return LOOPBACK_NAMES.has(String(request.headers.host ?? '').toLowerCase().replace(/:\d+$/, ''))
+}
+
+/**
+ * Reduces `host:port` to one spelling of loopback, so `localhost` and `127.0.0.1`
+ * count as the same reader while another local process on a different port does
+ * not. Returns null for anything that is not a loopback authority.
+ */
+function loopbackAuthority(authority) {
+  const lowered = String(authority).toLowerCase()
+  const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(lowered)
+  if (match === null) return null
+  const name = match[1] ?? ''
+  if (!LOOPBACK_NAMES.has(name)) return null
+  const port = match[2] ?? ''
+  return `loopback:${port}`
+}
+
+/**
+ * Refuses a cross-site page: another origin must not read this code via XHR.
+ *
+ * A missing Origin means a local native client, which could forge any header
+ * anyway, so dropping the check there costs nothing. The desktop app is the case
+ * worth naming: its page runs under the host's own `dsh-app:` protocol, so the
+ * origin can never equal the Host header — but only the host itself can mint that
+ * scheme, so accepting it does not widen what a web page can do.
+ */
+function isSameOriginRequest(request) {
+  const origin = request.headers.origin
+  if (origin === undefined || origin === '') return true
+  let parsed
+  try {
+    parsed = new URL(origin)
+  } catch {
+    return false
+  }
+  if (parsed.protocol === 'dsh-app:') return true
+  const mine = loopbackAuthority(request.headers.host)
+  return mine !== null && loopbackAuthority(parsed.host) === mine
+}
+
+/**
+ * Serves the pairing page: one code, its countdown, and how to use it.
+ *
+ * Returns 404 rather than 403 for a non-loopback caller, so a page that is
+ * scanning ports learns nothing about what lives here.
+ */
+function servePage(state, request, response) {
+  if (!isLoopbackHost(request) || !isSameOriginRequest(request)) {
+    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+    response.end('not found\n')
+    return
+  }
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    response.writeHead(405, { allow: 'GET, HEAD', 'content-type': 'text/plain; charset=utf-8' })
+    response.end('method not allowed\n')
+    return
+  }
+  // The settings card asks for JSON so it can repaint in place; a person who opens
+  // the URL in a tab gets the page. Same data, same gate.
+  const wantsJson = new URL(request.url ?? '/', 'http://placeholder').searchParams.get('format') === 'json'
+  if (wantsJson) {
+    const ticket = state.latestTicket
+    const body = JSON.stringify(pairingSnapshot(ticket))
+    response.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    })
+    response.end(request.method === 'HEAD' ? undefined : body)
+    return
+  }
+  const body = pairingPageHtml(state)
+  response.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8',
+    // The code itself must not be cached: a stale page would show a dead secret.
+    'cache-control': 'no-store',
+    // No external resources and no framing: the page holds a secret.
+    'content-security-policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'",
+    'x-content-type-options': 'nosniff',
+  })
+  response.end(request.method === 'HEAD' ? undefined : body)
+}
+
+/**
+ * What the settings card needs, and nothing more.
+ *
+ * The ticket text is included because the card draws the code itself; the QR is
+ * not pre-rendered here so the browser does not have to trust an SVG string from
+ * the server, and so a repaint costs one matrix instead of one string.
+ */
+function pairingSnapshot(ticket) {
+  if (ticket === null) {
+    return { ready: false, ticket: null, name: null, endpoints: [], expiresAt: null, size: 0, path: '' }
+  }
+  const json = ticketToJson(ticket)
+  const { cells, version } = encodeMatrix(encodeTicket(ticket))
+  return {
+    ready: true,
+    ticket: encodeTicket(ticket),
+    name: typeof json.name === 'string' ? json.name : 'Pocket Harness Host',
+    endpoints: Array.isArray(json.lan) ? json.lan : [],
+    expiresAt: typeof json.exp === 'string' ? json.exp : null,
+    version,
+    size: cells.length,
+    path: qrPath(cells),
+  }
+}
+
+/** The dark modules of a matrix, as one SVG path. */
+function qrPath(cells) {
+  let path = ''
+  for (let row = 0; row < cells.length; row += 1) {
+    for (let column = 0; column < cells.length; column += 1) {
+      if (cells[row][column]) path += `M${column} ${row}h1v1h-1z`
+    }
+  }
+  return path
+}
+
+/** Escapes text that goes into the page. */
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => {
+    switch (character) {
+      case '&':
+        return '&amp;'
+      case '<':
+        return '&lt;'
+      case '>':
+        return '&gt;'
+      case '"':
+        return '&quot;'
+      default:
+        return '&#39;'
+    }
+  })
+}
+
+/**
+ * The QR code as one SVG path.
+ *
+ * A path of unit squares rather than a matrix of `<rect>`s: a version 13 symbol is
+ * 69x69, and that many elements makes a page that is slow to paint for no gain.
+ */
+function qrSvg(ticketText) {
+  const { cells, version } = encodeMatrix(ticketText)
+  const size = cells.length
+  return (
+    `<svg viewBox="0 0 ${size} ${size}" width="320" height="320" role="img" ` +
+    `aria-label="配对二维码" shape-rendering="crispEdges" data-version="${version}">` +
+    `<rect width="${size}" height="${size}" fill="#ffffff"/>` +
+    `<path d="${qrPath(cells)}" fill="#000000"/>` +
+    `</svg>`
+  )
+}
+
+/**
+ * The page itself.
+ *
+ * One string rather than a template file so the plugin keeps its "no files beyond
+ * the module" shape. The countdown is the only script: it re-asks the Host when the
+ * code lapses instead of trusting a clock that may have been asleep.
+ */
+function pairingPageHtml(state) {
+  const ticket = state.latestTicket
+  if (ticket === null) {
+    return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Pocket Harness</title>` +
+      `<body style="font:16px/1.6 system-ui;padding:32px;max-width:520px;margin:auto">` +
+      `<h1 style="font-size:20px">配对</h1>` +
+      `<p>链接服务还没起来。稍等一下再刷新这个页面。</p>` +
+      `</body></html>`
+  }
+  const text = encodeTicket(ticket)
+  const json = ticketToJson(ticket)
+  const expiresAt = typeof json.exp === 'string' ? json.exp : null
+  const endpoints = Array.isArray(json.lan) ? json.lan : []
+  const remaining = expiresAt === null ? 0 : Math.max(0, Date.parse(expiresAt) - Date.now())
+  const minutes = Math.floor(remaining / 60000)
+  const seconds = Math.floor((remaining % 60000) / 1000)
+  const countdown = `${minutes}:${String(seconds).padStart(2, '0')}`
+  return `<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配对 Pocket Harness</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 28px 20px 40px; }
+  main { max-width: 520px; margin: 0 auto; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 22px; opacity: .68; }
+  .card { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+  .qr { background: #fff; padding: 14px; border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.14); line-height: 0; }
+  .meta { flex: 1 1 180px; min-width: 180px; }
+  .meta dl { margin: 0; }
+  .meta dt { font-size: 12px; opacity: .6; margin-top: 10px; }
+  .meta dd { margin: 1px 0 0; font-variant-numeric: tabular-nums; word-break: break-all; }
+  .clock { font-size: 15px; opacity: .8; }
+  ol { padding-left: 20px; margin: 26px 0 0; }
+  ol li { margin-bottom: 6px; }
+  code { font-size: 13px; }
+</style>
+<main>
+  <h1>配对 Pocket Harness</h1>
+  <p class="sub">在手机上打开 App，点右上角的扫码按钮，对准下面的二维码。</p>
+  <div class="card">
+    <div class="qr">${qrSvg(text)}</div>
+    <div class="meta">
+      <dl>
+        <dt>这台电脑</dt><dd>${escapeHtml(json.name ?? 'Pocket Harness Host')}</dd>
+        <dt>局域网地址</dt><dd>${endpoints.length > 0 ? endpoints.map(escapeHtml).join('<br>') : '（暂无）'}</dd>
+        <dt>有效期</dt><dd class="clock" id="clock" data-expires="${escapeHtml(expiresAt ?? '')}">${countdown}</dd>
+      </dl>
+    </div>
+  </div>
+  <ol>
+    <li>手机和这台电脑连同一个 Wi-Fi。</li>
+    <li>App 里扫码，或把这串字符粘进「手动输入配对码」：<br><code>${escapeHtml(text.slice(0, 32))}…</code></li>
+    <li>码每 10 分钟换一次，过期后刷新本页即可。</li>
+  </ol>
+</main>
+<script>
+  (function () {
+    var node = document.getElementById('clock')
+    if (!node) return
+    var expires = Date.parse(node.getAttribute('data-expires') || '')
+    function tick() {
+      var left = Math.max(0, expires - Date.now())
+      var m = Math.floor(left / 60000)
+      var s = Math.floor((left % 60000) / 1000)
+      node.textContent = m + ':' + (s < 10 ? '0' + s : s)
+      // A lapsed code is no longer scannable; reloading fetches the next one the
+      // Host published, rather than showing a countdown that has stopped meaning
+      // anything.
+      if (left === 0) { setTimeout(function () { location.reload() }, 1500); return }
+      setTimeout(tick, 1000)
+    }
+    tick()
+  }())
+</script>
+</html>`
 }

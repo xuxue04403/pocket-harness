@@ -52,9 +52,17 @@ Thumbs.db
 
 # 配对票据含 secret，绝不入库
 probe/_live-ticket*.txt
+probe/_log-ticket*.txt
 probe/_relay-ticket*.txt
 probe/_ticket.txt
 probe/_t.txt
+# 二维码就是票据的另一种画法，同样含 secret
+probe/_pairing*.png
+probe/_pairing*.svg
+# 中继共享令牌：本机部署时生成，和票据同级敏感
+relay/.relay-token
+# VPS 登录口令与私钥探针留下的东西
+probe/_vps_key.txt
 
 # 探针日志会captured配对码，不入库
 probe/_*.out
@@ -107,6 +115,17 @@ probe/_gh_token.txt
 probe/_publisher/
 probe/_npmcache/
 probe/_*.mjs
+# 一次性探针：Python 脚本、抓下来的文档、生成的密钥、截图解码结果，都不入库
+probe/_*.py
+probe/_docs/
+probe/_keys/
+probe/_qr_tables.txt
+# 读 asar 内部实现时写的一次性探针（要 ELECTRON_RUN_AS_NODE 才跑得起来），不是交付物
+probe/_*.cjs
+probe/_ts_files.txt
+probe/_vps_*
+probe/_ph_deploy_key*
+probe/_mkkkey.py
 # 手工验证本机 dsh 时的临时脚本与截图（设备侧验证用，不入库）
 probe/_*.sh
 probe/_u.xml

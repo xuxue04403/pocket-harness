@@ -10,7 +10,7 @@
 // printed: the test reads that file, and nothing secret reaches the terminal.
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 
 import { x25519PrivateToPublic } from '../host/noise.js'
@@ -43,7 +43,16 @@ if (!(expiresAt > Date.now())) {
 const key = Buffer.from(privateKey, 'base64url')
 // A second argument overrides the LAN endpoints, so an emulator or another
 // machine can reach this host. Comma-separated, `host:port` each.
-const endpoints = process.argv[3]?.split(',') ?? ['127.0.0.1:48100']
+//
+// The default is discovered rather than hard-coded: a laptop that joins a
+// different Wi-Fi gets a new address, and a stale ticket is the one failure mode
+// that looks like "the phone is broken" while the Host is perfectly healthy.
+const port = process.env.POCKET_HARNESS_PORT ?? '48100'
+const discovered = Object.values(networkInterfaces())
+  .flat()
+  .filter(entry => entry !== undefined && !entry.internal && entry.family === 'IPv4')
+  .map(entry => `${entry.address}:${port}`)
+const endpoints = process.argv[3]?.split(',') ?? (discovered.length > 0 ? discovered : [`127.0.0.1:${port}`])
 const ticket = createTicket({
   hostDeviceId: deviceId,
   hostPublicKey: x25519PrivateToPublic(key),
