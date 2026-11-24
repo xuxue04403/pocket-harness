@@ -149,7 +149,7 @@ cd packages\dsh_link; dart analyze; dart test
 cd relay; npm install; cd ..      # 中继的测试会 import relay/server.mjs，它依赖 ws
 node --test host
 
-# Flutter 客户端：132 个测试
+# Flutter 客户端：138 个测试
 cd app; flutter analyze; flutter test
 ```
 
