@@ -93,6 +93,20 @@ void main() {
   check('trailing separator', basename(r'D:\IDE\dsh-bot\') == 'dsh-bot');
   check('bare name', basename('work') == 'work');
 
+  stdout.writeln('projectsFoldedOnOpen');
+  final foldable = groupSessionsByProject([
+    session('a', r'D:\IDE\dsh-bot', 3000),
+    session('b', null, 2000),
+    session('c', r'D:\IDE\UU', 1000),
+  ]);
+  final folded = projectsFoldedOnOpen(foldable);
+  check('folds every project on open', folded.length == foldable.length);
+  check(
+    'uses the same keys the page stores',
+    folded.containsAll(<String>[r'D:\IDE\dsh-bot', r'D:\IDE\UU', '']),
+  );
+  check('folds nothing for an empty list', projectsFoldedOnOpen(const []).isEmpty);
+
   stdout.writeln('');
   if (failures == 0) {
     stdout.writeln('ALL SESSION GROUP CHECKS PASS');

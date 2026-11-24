@@ -134,3 +134,14 @@ probe/_u.xml
 probe/_web*.png
 probe/_debprobe/
 probe/proot/termux/
+
+# 模拟器验证时抓的屏幕与 UI 树（本机设备验证用，不入库）
+probe/_emu*.png
+probe/_c*.png
+probe/_crop*.png
+probe/_ui*.xml
+probe/_prefs-*.xml
+probe/_emu-prefs/
+probe/_emu-ticket.txt
+probe/_parent_check.mjs
+probe/_tmp/

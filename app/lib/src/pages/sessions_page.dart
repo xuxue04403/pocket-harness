@@ -40,6 +40,13 @@ class _SessionsPageState extends State<SessionsPage> {
   /// a refresh that reorders the tree does not open what was just closed.
   final Set<String> _collapsed = <String>{};
 
+  /// Whether the default folding has happened for this page.
+  ///
+  /// The desktop sidebar opens on the project you are in and keeps the rest
+  /// small; with 22 projects and 900-odd sessions an all-expanded list is the
+  /// same wall of titles the grouping was meant to remove, only indented.
+  bool _seeded = false;
+
   @override
   void initState() {
     super.initState();
@@ -71,6 +78,7 @@ class _SessionsPageState extends State<SessionsPage> {
         _link = link;
       });
       final sessions = await link.sessions();
+      _seedCollapsed(sessions);
       // Kept for the search page, which labels a hit with the title a person
       // knows rather than a session id.
       _loaded = sessions;
@@ -85,6 +93,19 @@ class _SessionsPageState extends State<SessionsPage> {
       if (mounted) setState(() => _error = _describe(error));
       rethrow;
     }
+  }
+
+  /// Folds every project the first time a list arrives.
+  ///
+  /// The desktop sidebar shows projects first and sessions under the one you
+  /// open. With 22 projects and 900-odd sessions an all-expanded list is the
+  /// same wall of titles the grouping was meant to remove, only indented, so
+  /// the page opens as a compact project index. This runs once per page, so a
+  /// later refresh does not fold what the person just opened.
+  void _seedCollapsed(List<SessionSummary> sessions) {
+    if (_seeded) return;
+    _seeded = true;
+    _collapsed.addAll(projectsFoldedOnOpen(groupSessionsByProject(sessions)));
   }
 
   /// Turns a transport failure into something a person can act on.
@@ -317,8 +338,9 @@ String _two(int value) => value.toString().padLeft(2, '0');
 ///
 /// The desktop groups sessions by project; the phone's flat list did not, so
 /// four sessions from four folders looked like one undifferentiated wall of
-/// "未命名会话". A section keeps the folder visible once and lets its sessions
-/// be scanned without repeating the path on every row.
+/// "未命名会话". A section keeps the folder visible once, hangs its sessions off
+/// a spine, and drops the path onto the header line, which is what the desktop
+/// sidebar looks like and what makes a long list scannable by eye.
 class _ProjectSection extends StatelessWidget {
   const _ProjectSection({
     required this.group,
@@ -337,82 +359,151 @@ class _ProjectSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final palette = theme.colorScheme;
+    final open = !collapsed;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
           onTap: onToggle,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(4, 12, 12, 8),
+            padding: const EdgeInsets.fromLTRB(8, 10, 12, 10),
             child: Row(
               children: [
                 Icon(
-                  collapsed ? Icons.chevron_right : Icons.expand_more,
+                  open ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
                   size: 20,
-                  color: theme.colorScheme.onSurfaceVariant,
+                  color: palette.onSurfaceVariant,
                 ),
+                const SizedBox(width: 2),
                 Icon(
                   group.key.isEmpty ? Icons.inbox_outlined : Icons.folder_outlined,
-                  size: 18,
-                  color: theme.colorScheme.onSurfaceVariant,
+                  size: 17,
+                  color: palette.onSurfaceVariant,
                 ),
                 const SizedBox(width: 6),
-                Expanded(
+                Flexible(
                   child: Text(
                     group.label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
+                // The parent path rides on the header instead of taking a row of
+                // its own: two projects can share a folder name ("src", "app"),
+                // and the tail of the path is enough to tell them apart.
+                if (group.key.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      _parentPath(group.key),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: palette.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 6),
                 if (group.running > 0)
                   Padding(
                     padding: const EdgeInsets.only(right: 4),
                     child: SizedBox(
-                      width: 14,
-                      height: 14,
+                      width: 12,
+                      height: 12,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: theme.colorScheme.primary,
+                        color: palette.primary,
                       ),
                     ),
                   ),
                 Text(
                   '${group.sessions.length}',
                   style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                    color: palette.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
           ),
         ),
-        // The full path under the header: two projects can share a folder name
-        // ("src", "app"), and then only the path tells them apart.
-        if (group.key.isNotEmpty && !collapsed)
+        // A folded project still has to say something about what is inside it,
+        // otherwise the index is 22 bare folder names. The newest title and its
+        // age do that in one line.
+        if (!open && group.sessions.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(44, 0, 16, 6),
-            child: Text(
-              group.key,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            padding: const EdgeInsets.only(left: 36, right: 16, bottom: 9),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    group.sessions.first.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: palette.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _relative(group.sessions.first.updatedAt),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: palette.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        // The spine is what turns a run of rows into a tree: without it every
+        // session reads as a sibling of the project instead of a child.
+        if (open)
+          Padding(
+            padding: const EdgeInsets.only(left: 18),
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: palette.outlineVariant.withValues(alpha: 0.6),
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final session in group.sessions)
+                    _SessionRow(
+                      session: session,
+                      onTap: () => onOpen(session),
+                      onLongPress: () => onRename(session),
+                    ),
+                ],
               ),
             ),
           ),
-        if (!collapsed)
-          ...group.sessions.map(
-            (session) => _SessionRow(
-              session: session,
-              onTap: () => onOpen(session),
-              onLongPress: () => onRename(session),
-            ),
-          ),
-        const Divider(height: 1),
+        Divider(height: 1, color: palette.outlineVariant.withValues(alpha: 0.4)),
       ],
     );
   }
+}
+
+/// Everything above the last segment of a path, for the header's dim suffix.
+String _parentPath(String path) {
+  final trimmed = path.endsWith('\\') || path.endsWith('/')
+      ? path.substring(0, path.length - 1)
+      : path;
+  final cut = trimmed.lastIndexOf(RegExp(r'[\\/]'));
+  if (cut <= 0) return trimmed;
+  final head = trimmed.substring(0, cut);
+  // "C:\a" would otherwise read as "C:", which says less than the folder name
+  // already on screen.
+  if (head.length <= 2 && head.endsWith(':')) return trimmed;
+  return head;
 }
 
 /// One session inside a project.
@@ -430,29 +521,51 @@ class _SessionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.only(left: 44, right: 16),
-      leading: session.running
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(
-              Icons.chat_bubble_outline,
-              size: 18,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-      title: Text(session.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        // The folder is on the header now, so the row only has to say when.
-        _relative(session.updatedAt),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+    final palette = theme.colorScheme;
+    final unknownTime = session.updatedAt.millisecondsSinceEpoch == 0;
+    return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 9, 16, 9),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: session.running
+                  ? const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Icons.chat_bubble_outline,
+                      size: 14,
+                      color: palette.onSurfaceVariant,
+                    ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                session.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // The folder sits on the header now, so the row only has to say when,
+            // and a right-aligned timestamp keeps the titles on one edge.
+            Text(
+              unknownTime ? '时间未知' : _relative(session.updatedAt),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: palette.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

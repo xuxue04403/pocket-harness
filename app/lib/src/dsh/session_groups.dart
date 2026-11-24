@@ -69,3 +69,16 @@ String basename(String path) {
   final name = cut == -1 ? trimmed : trimmed.substring(cut + 1);
   return name.isEmpty ? trimmed : name;
 }
+
+/// The projects a freshly opened page folds shut, keyed the way the page keys
+/// them.
+///
+/// The page opens as a project index rather than a session list: 22 projects of
+/// 900-odd sessions all expanded is the same wall of titles the grouping exists
+/// to remove, only indented and slower to scroll. Everything starts folded so
+/// the first screen answers "which projects do I have", and opening one answers
+/// "what is in it". Kept here rather than in the widget so the rule is testable
+/// without a widget tree.
+Set<String> projectsFoldedOnOpen(List<SessionGroup> groups) {
+  return groups.map((group) => group.key).toSet();
+}

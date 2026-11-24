@@ -215,6 +215,18 @@ void main() {
     test('returns nothing for an empty list', () {
       expect(groupSessionsByProject(const []), isEmpty);
     });
+
+    test('folds every project when the page first opens', () {
+      // The page is a project index, not a session list: opening 900 sessions
+      // across 22 projects is the wall the grouping was meant to remove.
+      final groups = groupSessionsByProject([
+        session('a', r'D:\IDE\dsh-bot', 1000),
+        session('b', null, 900),
+      ]);
+
+      expect(projectsFoldedOnOpen(groups), {r'D:\IDE\dsh-bot', ''});
+      expect(projectsFoldedOnOpen(const []), isEmpty);
+    });
   });
 
   group('live assistant stream', () {
