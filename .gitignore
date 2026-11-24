@@ -145,3 +145,4 @@ probe/_emu-prefs/
 probe/_emu-ticket.txt
 probe/_parent_check.mjs
 probe/_tmp/
+probe/_nginx_current.txt

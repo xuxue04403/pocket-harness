@@ -48,6 +48,82 @@ node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
     relayToken: <中继启动时的 token>
 ```
 
+## 已经在真实 VPS 上跑通的一条路
+
+仓库里这套东西不是只跑过 loopback：一台 Ubuntu 26.04 的云主机上，中继挂在 443 的子路径
+下，Host 在本机，手机侧走公网完成 Noise 握手并读到了 926 个会话。这里记下当时的形状，
+因为「能起进程」和「能穿出去」之间隔着几件容易踩的事。
+
+主机侧只开放 443，其余端口一律不通——所以中继**必须**监听 `127.0.0.1`，由 nginx 在 443
+上反代，不能自己占对外端口：
+
+```ini
+# /etc/systemd/system/pocket-harness-relay.service
+[Service]
+Environment=HOST=127.0.0.1
+Environment=PORT=8080
+Environment=POCKET_HARNESS_RELAY_TOKEN=<同一个 token>
+Restart=always
+NoNewPrivileges=yes
+```
+
+nginx 片段（注意 `proxy_pass` 末尾带 `/relay`，因为中继自己的 WebSocket 路径就是 `/relay`，
+前缀必须在这里改写掉；`/healthz` 单独一条，否则健康检查会被改写成 `/relay/healthz` 而 404）：
+
+```nginx
+location = /ph-relay/healthz {
+    proxy_pass http://127.0.0.1:8080/healthz;
+    access_log off;
+}
+
+location /ph-relay {
+    proxy_pass http://127.0.0.1:8080/relay;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_next_upstream off;
+}
+```
+
+这段可以直接由脚本注入：`tools/deploy-relay.py` 分 `probe / push / unit / nginx / verify` 五个
+阶段，主机全走环境变量，仓库里不留任何真实地址。
+
+```powershell
+$env:POCKET_HARNESS_VPS_HOST = "<你的主机>"
+$env:POCKET_HARNESS_VPS_PORT = "59188"
+$env:POCKET_HARNESS_VPS_KEY  = "<私钥路径>"
+$env:POCKET_HARNESS_VPS_DOMAIN = "<你的域名>"
+python tools\deploy-relay.py --stage nginx
+```
+
+踩过的三个坑，写下来省得再撞：
+
+- **站点配置是符号链接**：`/etc/nginx/sites-enabled/x` 指向 `sites-available/x`，而 `grep -l`
+  不跟随符号链接，会得出「没有文件提到这个域名」的假结论。要用 `grep -Rl` 再 `readlink -f`。
+- **要插进 `listen 443` 那个 server 块**：文件里通常先出现一个 `listen 80 { return 301 }` 块，
+  把 location 插到「第一个 `server {`」后面就永远不会被读到。脚本按花括号配对找块体，再确认
+  块里有 `listen … 443` 才插。
+- **配置文件可能是非 UTF-8**：带中文注释的配置按文本读改写会毁掉编码。整份按 bytes 读写，
+  只插入纯 ASCII 片段。
+
+验证分两步，都不需要手机：
+
+```powershell
+# 1) 443 → nginx → 中继 的 WebSocket 升级通不通
+$env:POCKET_HARNESS_RELAY_URL = "wss://<域名>/ph-relay"
+node probe\relay-ws-check.mjs
+
+# 2) 公网中继上完成 Noise 握手并真的调到 session/list
+node probe\relay-e2e.mjs
+```
+
+第二条成功时会打印 `THE PHONE CAN REACH THIS HOST THROUGH THE PUBLIC RELAY` 与真实会话数。
+它用的是运行中 Host 自己的配对码（含 `relay`/`room`/`rtok`），所以验的是手机真正会走的那条路。
+
 ## 反向代理（Caddy）
 
 ```

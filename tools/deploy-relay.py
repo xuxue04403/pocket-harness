@@ -33,6 +33,7 @@ import os
 import re
 import secrets
 import sys
+import time
 from pathlib import Path
 
 import paramiko
@@ -106,7 +107,27 @@ def run(client: paramiko.SSHClient, command: str, timeout: int = 180) -> tuple[i
     out = stdout.read().decode("utf-8", "replace")
     err = stderr.read().decode("utf-8", "replace")
     code = stdout.channel.recv_exit_status()
+    # Close the channel before the caller opens another one. A small VPS often
+    # runs the stock MaxSessions, and a lingering exec channel plus a fresh SFTP
+    # channel hits "open failed: Connect failed" instead of a clear error.
+    stdout.channel.close()
     return code, (out + err).strip()
+
+
+def sftp_of(client: paramiko.SSHClient) -> paramiko.SFTPClient:
+    transport = client.get_transport()
+    assert transport is not None
+    last: Exception | None = None
+    for attempt in range(4):
+        try:
+            handle = paramiko.SFTPClient.from_transport(transport)
+            assert handle is not None
+            return handle
+        except paramiko.ssh_exception.ChannelException as error:
+            last = error
+            time.sleep(1.5 * (attempt + 1))
+    assert last is not None
+    raise last
 
 
 def stage_probe(client: paramiko.SSHClient) -> None:
@@ -145,10 +166,7 @@ def stage_push(client: paramiko.SSHClient) -> None:
     if code != 0:
         sys.exit(f"cannot create {REMOTE_DIR}: {output}")
 
-    transport = client.get_transport()
-    assert transport is not None
-    sftp = paramiko.SFTPClient.from_transport(transport)
-    assert sftp is not None
+    sftp = sftp_of(client)
 
     files = ["server.mjs", "run.mjs", "package.json"]
     lock = RELAY_DIR / "package-lock.json"
@@ -195,10 +213,7 @@ ProtectSystem=full
 [Install]
 WantedBy=multi-user.target
 """
-    transport = client.get_transport()
-    assert transport is not None
-    sftp = paramiko.SFTPClient.from_transport(transport)
-    assert sftp is not None
+    sftp = sftp_of(client)
     remote_tmp = "/tmp/pocket-harness-relay.service"
     with sftp.file(remote_tmp, "w") as handle:
         handle.write(unit)
@@ -220,11 +235,33 @@ WantedBy=multi-user.target
 
 
 def stage_nginx(client: paramiko.SSHClient) -> None:
-    """Add a location that bypasses the site gate, ahead of it."""
-    snippet = f"""    # Pocket Harness relay: a WebSocket long-poll path must not sit behind the
-    # HTML gate, or the phone can never open the upgrade.
-    location = {NGINX_LOCATION} {{
-        proxy_pass http://127.0.0.1:{RELAY_PORT};
+    """Add a location that reaches the relay ahead of the site's catch-all.
+
+    The relay speaks WebSocket on /relay and answers /healthz over plain HTTP.
+    Both are proxied under one prefix so a single certificate covers them and
+    the phone only needs one name.
+
+    Two things this deliberately does not do:
+
+    * It does not assume the file is UTF-8. The site config on a real box often
+      carries comments in the operator's own encoding, and re-encoding it would
+      corrupt them. Everything here stays in bytes and the snippet is pure ASCII.
+    * It does not insert after "the first server {" — that is the port-80
+      redirect block on a normal HTTP-to-HTTPS site, so the location would live
+      where nothing ever reads it. It finds the block that listens on 443.
+    """
+    snippet = f"""
+    # Pocket Harness relay (added by tools/deploy-relay.py).
+    # A WebSocket upgrade must not reach the application behind the site gate:
+    # the gate answers unknown paths with a 303, and the phone would never get
+    # its upgrade. The prefix is rewritten so the relay keeps its own /relay.
+    location = {NGINX_LOCATION}/healthz {{
+        proxy_pass http://127.0.0.1:{RELAY_PORT}/healthz;
+        access_log off;
+    }}
+
+    location {NGINX_LOCATION} {{
+        proxy_pass http://127.0.0.1:{RELAY_PORT}/relay;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -233,59 +270,73 @@ def stage_nginx(client: paramiko.SSHClient) -> None:
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_buffering off;
-        access_log off;
-    }}
-    location = {NGINX_LOCATION}/healthz {{
-        proxy_pass http://127.0.0.1:{RELAY_PORT}/healthz;
+        proxy_cache off;
+        proxy_next_upstream off;
         access_log off;
     }}
 """
 
-    inspect = r"""
-for f in $(grep -rlE "server_name[^;]*DOMAIN" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null); do
-  echo "FILE $f"
-  grep -n "location\|return 303\|gate" "$f" | head -30
-done
+    targets = r"""
+for f in $(grep -RlE "server_name[^;]*DOMAIN" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null); do
+  readlink -f "$f"
+done | sort -u | head -5
 """.replace("DOMAIN", DOMAIN)
-    _code, output = run(client, inspect.strip(), timeout=60)
-    log(output)
+    _code, listed = run(client, targets.strip(), timeout=60)
+    files = [line.strip() for line in listed.splitlines() if line.strip().startswith("/")]
+    if not files:
+        sys.exit(f"no nginx file mentions {DOMAIN}")
 
-    if NGINX_LOCATION in output:
-        log(f"{NGINX_LOCATION} already present in nginx, leaving it alone")
-        return
+    sftp = sftp_of(client)
 
-    transport = client.get_transport()
-    assert transport is not None
-    sftp = paramiko.SFTPClient.from_transport(transport)
-    assert sftp is not None
-    with sftp.file("/tmp/ph-relay-location.conf", "w") as handle:
-        handle.write(snippet)
+    for target in files:
+        with sftp.file(target, "rb") as handle:
+            raw = handle.read()
+        if NGINX_LOCATION.encode("ascii") in raw:
+            log(f"{target}: {NGINX_LOCATION} already present, leaving it alone")
+            continue
+
+        offset = _https_server_open(raw)
+        if offset is None:
+            log(f"{target}: no server block listening on 443, skipping")
+            continue
+
+        backup = f"{target}.bak-{int(time.time())}"
+        run(client, f"cp -p {target} {backup}", timeout=30)
+        updated = raw[:offset] + snippet.encode("ascii") + raw[offset:]
+        with sftp.file(target, "wb") as handle:
+            handle.write(updated)
+        log(f"{target}: injected the relay location at byte {offset} (backup {backup})")
+
     sftp.close()
 
-    inject = r"""
-set -e
-target=$(grep -rlE "server_name[^;]*DOMAIN" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | head -1)
-[ -n "$target" ] || { echo "no server block for DOMAIN"; exit 2; }
-cp "$target" "$target.bak-$(date +%s)"
-python3 - "$target" <<'PY'
-import sys, re, pathlib
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-snippet = pathlib.Path('/tmp/ph-relay-location.conf').read_text()
-# Insert right after the server line that carries the 443 listener.
-match = re.search(r'server\s*\{', text)
-if not match:
-    sys.exit('cannot find a server block')
-text = text[:match.end()] + '\n' + snippet + text[match.end():]
-path.write_text(text)
-print('injected into', path)
-PY
-nginx -t && systemctl reload nginx && echo nginx-reloaded
-""".replace("DOMAIN", DOMAIN)
-    code, output = run(client, inject.strip(), timeout=120)
+    code, output = run(client, "nginx -t 2>&1 && systemctl reload nginx && echo nginx-reloaded")
     log(output)
-    if code != 0:
-        sys.exit("nginx injection failed; the previous config is in place as a .bak")
+    if code != 0 or "nginx-reloaded" not in output:
+        sys.exit("nginx rejected the config; the .bak next to it is the working copy")
+
+
+def _https_server_open(raw: bytes) -> int | None:
+    """Byte offset just after the opening brace of the block listening on 443."""
+    for match in re.finditer(rb"\bserver\s*\{", raw):
+        depth = 0
+        index = match.end() - 1
+        end = None
+        while index < len(raw):
+            char = raw[index : index + 1]
+            if char == b"{":
+                depth += 1
+            elif char == b"}":
+                depth -= 1
+                if depth == 0:
+                    end = index
+                    break
+            index += 1
+        if end is None:
+            continue
+        body = raw[match.end() : end]
+        if re.search(rb"listen\s+[^;]*\b443\b", body):
+            return match.end()
+    return None
 
 
 def stage_verify(client: paramiko.SSHClient) -> None:

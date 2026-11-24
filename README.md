@@ -139,6 +139,8 @@ node run.mjs          # 监听 8080，/healthz 可探活
 
 然后在 Host 插件的配置里设置 `relayUrl`（例如 `wss://relay.example.com/relay`）与 `relayToken`（就是上面那个 `POCKET_HARNESS_RELAY_TOKEN` 的值）并重启 Harness。之后手机在局域网内会直连，出了局域网就自动走中继。中继只转发密文，解不开任何一帧。
 
+这套链路已经在一台只开放 443 的云主机上真跑通过：中继监听 `127.0.0.1:8080`，由 nginx 在 443 的子路径上反代，Host 在本机，手机侧从公网完成握手并读到了会话列表。反向代理片段、systemd 单元、以及三个容易踩的坑（符号链接站点配置、必须插进 `listen 443` 的 server 块、配置可能是非 UTF-8）都写在 [docs/relay-deployment.md](docs/relay-deployment.md)，部署脚本是 `tools/deploy-relay.py`；两条自检命令 `probe/relay-ws-check.mjs`（WebSocket 升级）与 `probe/relay-e2e.mjs`（经公网中继握手并调 `session/list`）不需要手机就能跑。
+
 ## 开发
 
 ```powershell
