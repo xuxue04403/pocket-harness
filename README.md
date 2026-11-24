@@ -217,7 +217,20 @@ node tools/publish-release.mjs --owner <账号> --tag v0.1.0-beta
 
 两个脚本都是幂等的：远端已经一致就跳过，release 已存在就只补缺失的附件。
 
+**产物换了的时候不能只靠幂等**：同名附件已存在会被跳过，release 上就留着上一版的
+APK，而 `SHA256SUMS.txt` 已经指向新的字节，两边对不上。换产物时按这个顺序来：
+
+```powershell
+node tools/reset-release-assets.mjs --owner <账号> --tag v0.1.0-beta   # 先清空旧附件
+node tools/publish-release.mjs      --owner <账号> --tag v0.1.0-beta
+node tools/verify-release.mjs       --owner <账号> --tag v0.1.0-beta   # 把附件下回来重算
+```
+
+`verify-release.mjs` 是真的从 release 下载每个附件再算 sha256，而不是相信上传返回值。
+
 `publish-git.mjs` 对分支和 tag 走两条路，这点值得单说：isomorphic-git 的 push 只处理 `refs/heads/*`，refspec 里写 `refs/tags/x:refs/tags/x` 会被**静默忽略**（返回体里连这个 ref 都不出现，而 `ok: true`），而 REST 的建 ref 又要求那个 tag 对象先存在于远端。所以脚本按 git 线上协议手工发一次 `receive-pack`，把注解 tag 本体作为单对象 packfile 推上去——远端得到的 sha 与本地逐字节相同，`git clone --branch v0.1.0-beta` 才对得上。
+
+tag 指到旧提交时，`--force` 会覆盖远端：先 `git tag -d v0.1.0-beta` 再 `git tag -a v0.1.0-beta -m "Pocket Harness v0.1.0-beta"`，别用 `git tag -f` 重打在同一提交上——那样 sha 会变而内容不变，白推一次。
 
 
 ## 安全
