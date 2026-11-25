@@ -8,9 +8,11 @@ import '../dsh/host_link.dart';
 import '../dsh/outgoing_image.dart';
 import '../dsh/questions.dart';
 import '../dsh/tool_labels.dart';
+import '../widgets/markdown_body.dart';
 import 'files_page.dart';
 import 'instructions_page.dart';
 import 'jobs_page.dart';
+import 'local_web_page.dart';
 import 'model_sheet.dart';
 import 'skill_sheet.dart';
 
@@ -686,10 +688,16 @@ class _LiveTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (reasoning.isNotEmpty) _Reasoning(text: reasoning, live: true),
-          // Plain text rather than a selectable span: the draft is transient, and
-          // a selectable node is invisible to screen readers and to the
-          // accessibility tree the UI tests read.
-          if (text.isNotEmpty) Text('$text▍', style: theme.textTheme.bodyMedium),
+          // The same renderer the finished replies use, so the text does not
+          // change shape when the stream ends: it re-parses on each delta and
+          // only the blocks that grew repaint.
+          if (text.isNotEmpty)
+            MarkdownBody(
+              text: text,
+              streaming: true,
+              selectable: false,
+              onOpenLink: (url) => _openLink(context, url),
+            ),
           if (text.isEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 2),
@@ -756,7 +764,12 @@ class _TranscriptTile extends StatelessWidget {
             if (reasoning != null) _Reasoning(text: reasoning),
             if (images.isNotEmpty)
               _AttachmentStrip(sessionId: sessionId, link: link, images: images),
-            if (text.isNotEmpty) SelectableText(text, style: theme.textTheme.bodyMedium),
+            if (text.isNotEmpty)
+              MarkdownBody(
+                text: text,
+                selectable: true,
+                onOpenLink: (url) => _openLink(context, url),
+              ),
           ],
         ),
       ),
@@ -1638,4 +1651,33 @@ class _ChoiceDialogState extends State<_ChoiceDialog> {
       ],
     );
   }
+}
+
+/// Opens a link from a reply.
+///
+/// Web links open in the app's own browser ([LocalWebPage]) — it already exists
+/// for the workspace preview, needs no extra dependency, and keeps the reader on
+/// the phone instead of throwing them into a tab they then have to come back
+/// from. Anything that is not http(s) — a `mailto:`, a `python:` example that
+/// slipped out of a code block — cannot be shown by a WebView, so it says so
+/// rather than opening a blank page.
+Future<void> _openLink(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null || !uri.hasScheme) {
+    _showLinkProblem(context, '这个地址打不开：$url');
+    return;
+  }
+  if (uri.scheme != 'http' && uri.scheme != 'https') {
+    _showLinkProblem(context, '只支持网页链接，这个不是：$url');
+    return;
+  }
+  await Navigator.of(context).push(
+    MaterialPageRoute<void>(builder: (_) => LocalWebPage(url: uri.toString())),
+  );
+}
+
+void _showLinkProblem(BuildContext context, String message) {
+  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+    SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+  );
 }

@@ -83,27 +83,33 @@ Set<String> projectsFoldedOnOpen(List<SessionGroup> groups) {
   return groups.map((group) => group.key).toSet();
 }
 
-/// The sessions worth a row on the phone, which is what the desktop sidebar
-/// lists.
+/// The sessions worth a row on the phone.
 ///
-/// DSH answers `session/list` with every session it ever created — 941 of them
-/// on the machine this was written against, of which only 3 ever got an agent. A
-/// folder where the desktop listed one session came back with nine, which read
-/// as the phone and the computer disagreeing about the same folder.
+/// DSH answers `session/list` with every session it ever created — 955 of them
+/// on the machine this was written against. A folder where the desktop listed
+/// one conversation came back with nine, which read as the phone and the
+/// computer disagreeing about the same folder.
 ///
-/// Seven of those nine are start-up failures, not conversations: the same prompt
-/// was queued eight times in an hour, each turn began, and no agent was ever
-/// bound — so each has a user row carrying that prompt as its title, and
-/// `agentAvailable` false. None of them can be opened (the Host has no agent to
-/// resume), and the desktop never lists them. `blank` cannot stand in for this
-/// check: those rows carry `blank: false` because a prompt landed in them, which
-/// is exactly what makes them look real in a list. `probe/session-count.mjs`
-/// prints these counts against a live Host so none of this has to be taken on
-/// faith.
+/// Seven of those nine are start-up failures, not conversations: the same
+/// system prompt was delivered into eight fresh sessions in an hour, each turn
+/// began, and no agent was ever bound. Their signature is precise — a turn has
+/// started (so the Host's `blank` is already false) but no message ever arrived
+/// from a person (`lastPromptAt` is still null, because the prompt was spliced
+/// into the inbox rather than sent by the user).
 ///
-/// This flag is the one the desktop filters on, so it is the one the phone
-/// filters on too. It is read as `!= false` rather than `== true` on purpose:
-/// sessions the Host reports without the field at all are older, real sessions.
+/// The first attempt filtered on `agentAvailable`, which was wrong twice over:
+/// it means "an agent is attached right now", so it reads false for every
+/// session after the Host restarts, and it would have emptied the list on a
+/// fresh boot. `blank` alone is wrong the other way — a session made by the
+/// "new session" button is blank until the first message and must stay on
+/// screen, or the button looks broken.
+///
+/// So: a session stays when somebody has talked to it, or when nothing has
+/// happened in it yet. Only "a turn started and no person ever spoke" is
+/// dropped. `probe/session-count.mjs` prints these counts against a live Host
+/// so none of this has to be taken on faith.
 List<SessionSummary> sessionsWorthShowing(List<SessionSummary> sessions) {
-  return sessions.where((session) => session.agentAvailable).toList();
+  return sessions
+      .where((session) => session.used || session.blank)
+      .toList();
 }

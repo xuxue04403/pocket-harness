@@ -1,7 +1,7 @@
 name: pocket_harness
 description: "Pocket Harness: drive a desktop DeepSeek Harness from a phone."
 publish_to: 'none'
-version: 0.1.1+101
+version: 0.1.5+105
 
 environment:
   sdk: ^3.14.0

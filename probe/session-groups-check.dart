@@ -110,8 +110,9 @@ void main() {
   stdout.writeln('sessionsWorthShowing');
   SessionSummary row({
     required String id,
-    required bool agentAvailable,
-    required bool blank,
+    bool blank = false,
+    bool agentAvailable = false,
+    int? lastPromptAt,
   }) => SessionSummary(
     sessionId: id,
     title: id,
@@ -119,44 +120,36 @@ void main() {
     running: false,
     agentAvailable: agentAvailable,
     blank: blank,
+    lastPromptAt: lastPromptAt == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(lastPromptAt),
   );
   check(
-    'keeps what the desktop lists',
+    'keeps a conversation somebody spoke in',
     sessionsWorthShowing([
-      row(id: 'used', agentAvailable: true, blank: false),
+      row(id: 'used', lastPromptAt: 5000),
     ]).map((s) => s.sessionId).join(',') == 'used',
   );
   check(
-    'drops agent-less seeds',
+    'keeps a session the new-session button just made',
+    sessionsWorthShowing([row(id: 'fresh', blank: true)]).length == 1,
+  );
+  check(
+    'drops start-up failures where a turn began but nobody spoke',
     sessionsWorthShowing([
-      row(id: 'real', agentAvailable: true, blank: false),
-      row(id: 'seed', agentAvailable: false, blank: true),
-      row(id: 'seed', agentAvailable: false, blank: true),
+      row(id: 'real', lastPromptAt: 5000),
+      row(id: 'abandoned'),
+      row(id: 'abandoned'),
     ]).map((s) => s.sessionId).join(',') == 'real',
   );
   check(
-    'drops rows with no agent attached',
+    'survives a restart, when every row reads agentAvailable false',
     sessionsWorthShowing([
-      row(id: 'real', agentAvailable: true, blank: false),
-      row(id: 'seed', agentAvailable: false, blank: true),
-      row(id: 'seed', agentAvailable: false, blank: true),
-    ]).map((s) => s.sessionId).join(',') == 'real',
-  );
-  check(
-    'drops an agent-less row that already has a prompt',
-    sessionsWorthShowing([
-      row(id: 'real', agentAvailable: true, blank: false),
-      row(id: 'abandoned', agentAvailable: false, blank: false),
-    ]).map((s) => s.sessionId).join(',') == 'real',
-  );
-  check(
-    'keeps a session with an agent but no prompt yet',
-    sessionsWorthShowing([
-      row(id: 'fresh', agentAvailable: true, blank: true),
-    ]).length == 1,
+      row(id: 'a', lastPromptAt: 1000),
+      row(id: 'b', lastPromptAt: 2000),
+    ]).map((s) => s.sessionId).join(',') == 'a,b',
   );
   check('handles an empty list', sessionsWorthShowing(const []).isEmpty);
-
   stdout.writeln('');
   if (failures == 0) {
     stdout.writeln('ALL SESSION GROUP CHECKS PASS');

@@ -16,6 +16,7 @@ class SessionSummary {
     this.cwd,
     this.agentAvailable = true,
     this.blank = false,
+    this.lastPromptAt,
   });
 
   final String sessionId;
@@ -24,20 +25,33 @@ class SessionSummary {
   final bool running;
   final String? cwd;
 
-  /// Whether the Host ever put an agent in this session.
+  /// Whether an agent is attached to this session *right now*.
   ///
-  /// DSH keeps every session it has created a record for, but the desktop
-  /// sidebar only lists the ones it can actually open. A phone that lists the
-  /// rest shows rows the computer never showed — a directory can pick up seven
-  /// of them and look like the two machines are out of sync when they are not.
+  /// This is not "has this session ever had an agent": the Host computes it as
+  /// `agents.get(id)?.session === session`, so every session reads false the
+  /// moment the Host restarts, and a cold row is hard-coded false. Filtering on
+  /// it looked right while one long-running Host had an agent parked in the
+  /// folder and would have emptied the whole list after a restart.
   final bool agentAvailable;
 
-  /// Whether the session is still an empty seed with no first turn.
+  /// Whether no turn has ever started here — "new session" makes one of these.
   ///
-  /// A seed is not noise on its own: "new session" creates one and it must stay
-  /// visible until it is used. It only becomes noise when it never got an agent,
-  /// because then nothing in the world will open it.
+  /// Not the filter either: an abandoned prompt has already started a turn, so
+  /// the seven ghost sessions all read `blank: false` just like real ones.
   final bool blank;
+
+  /// When a person last sent a message into this session, or null if never.
+  ///
+  /// This is the only durable answer to "did somebody actually use this". The
+  /// Host advances it on `user/message` events whose source is the user, so it
+  /// survives restarts, and the ghost sessions — a system prompt delivered
+  /// into a fresh session that then died before the agent attached — never
+  /// collect one. A directory showed nine rows on the phone for exactly the
+  /// two that the desktop lists, and this is what tells them apart.
+  final DateTime? lastPromptAt;
+
+  /// Whether a person has ever sent anything here.
+  bool get used => lastPromptAt != null;
 
   /// Reads the fields the phone actually shows, tolerating anything missing.
   ///
@@ -63,6 +77,8 @@ class SessionSummary {
         : value['cwd'] is String && (value['cwd'] as String).isNotEmpty
         ? value['cwd'] as String
         : null;
+    final metadata = map['sessionListMetadata'];
+    final prompted = metadata is Map<String, Object?> ? metadata['lastPromptAt'] : null;
     final updated = value['updatedAt'];
     return SessionSummary(
       sessionId: id,
@@ -74,6 +90,9 @@ class SessionSummary {
       cwd: directory,
       agentAvailable: value['agentAvailable'] != false,
       blank: value['blank'] == true,
+      lastPromptAt: prompted is num
+          ? DateTime.fromMillisecondsSinceEpoch(prompted.toInt())
+          : null,
     );
   }
 }

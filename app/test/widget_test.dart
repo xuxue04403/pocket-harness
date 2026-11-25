@@ -2,15 +2,22 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dsh_link/dsh_link.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart' show SelectableText;
+import 'package:pocket_harness/src/dsh/code_highlight.dart';
 import 'package:pocket_harness/src/dsh/host_link.dart';
 import 'package:pocket_harness/src/dsh/instruction_paths.dart';
+// Parsing stays out of the widget layer for the same reason grouping does:
+// a parse bug should be findable without pumping a frame.
+import 'package:pocket_harness/src/dsh/markdown.dart';
 import 'package:pocket_harness/src/dsh/outgoing_image.dart';
 import 'package:pocket_harness/src/dsh/questions.dart';
 // The grouping is plain Dart, deliberately separate from the page: importing
 // the page here would drag Flutter widgets into a test that does not need them.
 import 'package:pocket_harness/src/dsh/session_groups.dart';
 import 'package:pocket_harness/src/dsh/tool_labels.dart';
+import 'package:pocket_harness/src/widgets/markdown_body.dart';
 
 /// Transcript rendering is the one piece of the phone UI with real logic, and
 /// it runs against records captured from a real Host, so it is tested here
@@ -197,6 +204,43 @@ void main() {
 
       expect(summary!.agentAvailable, isTrue);
       expect(summary.blank, isFalse);
+      expect(summary.lastPromptAt, isNull);
+      expect(summary.used, isFalse);
+    });
+
+    test('reads the last human prompt out of the list metadata', () {
+      final summary = SessionSummary.fromJson({
+        'sessionId': 's7',
+        'updatedAt': 1700000000000,
+        'projections': {
+          'values': {
+            'title': '分析 DeepSeek 对话分享',
+            'sessionListMetadata': {'blank': false, 'lastPromptAt': 1700000000123},
+          },
+        },
+      });
+
+      expect(summary!.used, isTrue);
+      expect(
+        summary.lastPromptAt!.millisecondsSinceEpoch,
+        1700000000123,
+      );
+    });
+
+    test('treats a never-prompted session as unused even after a turn began', () {
+      final summary = SessionSummary.fromJson({
+        'sessionId': 's8',
+        'updatedAt': 1700000000000,
+        'projections': {
+          'values': {
+            'title': 'You are a third-person note-taker.',
+            'sessionListMetadata': {'blank': false, 'lastPromptAt': null},
+          },
+        },
+      });
+
+      expect(summary!.used, isFalse);
+      expect(summary.blank, isFalse);
     });
   });
 
@@ -279,39 +323,61 @@ void main() {
   });
 
   group('sessionsWorthShowing', () {
-    SessionSummary row(String id, {required bool agentAvailable, bool blank = false}) =>
-        SessionSummary(
-          sessionId: id,
-          title: id,
-          updatedAt: DateTime.fromMillisecondsSinceEpoch(1000),
-          running: false,
-          agentAvailable: agentAvailable,
-          blank: blank,
-        );
+    SessionSummary row(
+      String id, {
+      bool blank = false,
+      bool agentAvailable = false,
+      int? lastPromptAt,
+    }) => SessionSummary(
+      sessionId: id,
+      title: id,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+      running: false,
+      agentAvailable: agentAvailable,
+      blank: blank,
+      lastPromptAt: lastPromptAt == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(lastPromptAt),
+    );
 
-    test('keeps sessions the desktop sidebar would list', () {
-      final shown = sessionsWorthShowing([row('used', agentAvailable: true)]);
+    test('keeps a conversation somebody has sent a message to', () {
+      final shown = sessionsWorthShowing([row('used', lastPromptAt: 5000)]);
 
       expect(shown.map((session) => session.sessionId), ['used']);
     });
 
-    test('drops sessions no agent was ever attached to', () {
-      // The reported shape: one real session and seven rows where a prompt was
-      // queued and no agent bound, all in the same folder. The desktop listed
-      // one; the phone listed nine.
+    test('keeps a session made by the new-session button', () {
+      // No turn has started, so `blank` is true and there is no prompt yet; the
+      // row must stay or the button looks broken.
+      final shown = sessionsWorthShowing([row('fresh', blank: true)]);
+
+      expect(shown.map((session) => session.sessionId), ['fresh']);
+    });
+
+    test('drops start-up failures: a turn started but nobody ever spoke', () {
+      // The reported shape: one real session and seven rows where a system
+      // prompt was spliced into a fresh session and no agent bound, all in the
+      // same folder. The desktop listed one; the phone listed nine. Those rows
+      // carry `blank: false` because a turn began, and `agentAvailable` only by
+      // accident of the Host's uptime, so neither flag separates them.
       final shown = sessionsWorthShowing([
-        row('real', agentAvailable: true),
-        row('failed-start', agentAvailable: false, blank: false),
-        row('failed-start', agentAvailable: false, blank: false),
+        row('real', lastPromptAt: 5000),
+        row('failed-start'),
+        row('failed-start'),
       ]);
 
       expect(shown.map((session) => session.sessionId), ['real']);
     });
 
-    test('drops a blank seed as well, agent or not', () {
-      final shown = sessionsWorthShowing([row('seed', agentAvailable: false, blank: true)]);
+    test('survives a Host restart, when no agent is attached anywhere', () {
+      // After a restart every row reads `agentAvailable: false`; a filter on
+      // that flag would empty the list. Real conversations must still show.
+      final shown = sessionsWorthShowing([
+        row('old-a', lastPromptAt: 1000),
+        row('old-b', lastPromptAt: 2000),
+      ]);
 
-      expect(shown, isEmpty);
+      expect(shown.map((session) => session.sessionId), ['old-a', 'old-b']);
     });
 
     test('returns an empty list unchanged', () {
@@ -1228,6 +1294,207 @@ void _todoTests() {
     test('nowhere legal means no create button', () {
       expect(instructionCreateDirectory(projectRoot: null, cwd: null), isNull);
       expect(instructionCreateDirectory(projectRoot: '', cwd: ''), isNull);
+    });
+  });
+
+  group('message rendering', () {
+    test('a fenced block keeps its language and body', () {
+      final blocks = parseMarkdown('```dart\nvoid main() {}\n```');
+      final code = blocks.single as MdCodeBlock;
+      expect(code.language, 'dart');
+      expect(code.code, 'void main() {}');
+      expect(code.closed, isTrue);
+    });
+
+    test('an unclosed fence is still code while the reply streams in', () {
+      // A reply is reparsed on every delta, so between the opening and closing
+      // fence every message really is an unclosed fence. Treating it as text
+      // would make the block change shape mid-stream.
+      final blocks = parseMarkdown('```python\nprint(1)');
+      final code = blocks.single as MdCodeBlock;
+      expect(code.language, 'python');
+      expect(code.code, 'print(1)');
+      expect(code.closed, isFalse);
+    });
+
+    test('a reply with a heading, list, code and table parses in order', () {
+      const reply = '''
+## Summary
+
+The build **failed**.
+
+- delete `pubspec.lock`
+- rerun
+
+```bash
+flutter pub get
+```
+
+| step | result |
+| --- | --- |
+| 1 | ok |
+''';
+      final kinds = parseMarkdown(reply)
+          .map((block) => block.runtimeType.toString())
+          .toList();
+      expect(kinds, [
+        'MdHeading',
+        'MdParagraph',
+        'MdListBlock',
+        'MdCodeBlock',
+        'MdTable',
+      ]);
+    });
+
+    test('inline markers become spans, not literal asterisks', () {
+      final spans = parseInline('a **b** and `c`');
+      expect(spans.whereType<MdStrong>().length, 1);
+      expect(spans.whereType<MdCodeSpan>().single.text, 'c');
+      expect(inlineToPlainText(spans), 'a b and c');
+    });
+
+    test('a link keeps the label the reader sees', () {
+      final link =
+          parseInline('see [the docs](https://example.com)').whereType<MdLink>().single;
+      expect(link.label, 'the docs');
+      expect(link.url, 'https://example.com');
+    });
+
+    test('an unclosed marker stays literal instead of eating the text', () {
+      expect(inlineToPlainText(parseInline('a **b')), 'a **b');
+    });
+
+    test('highlighting never changes the text it colours', () {
+      const code = 'final a = 42; // note\nvoid main() { print("hi"); }';
+      final spans = highlightCode(code, 'dart');
+      expect(spans.map((span) => span.text).join(), code);
+      expect(
+        spans.any((span) => span.kind == CodeKind.keyword && span.text == 'final'),
+        isTrue,
+      );
+      expect(
+        spans.any((span) => span.kind == CodeKind.comment && span.text == '// note'),
+        isTrue,
+      );
+    });
+
+    test('an unknown fence tag is left uncoloured', () {
+      expect(languageFor('notalanguage'), isNull);
+      expect(highlightCode('x', 'notalanguage').single.kind, CodeKind.plain);
+    });
+
+    test('sql keywords are matched whatever the case', () {
+      final spans = highlightCode("select a from t where b = 'x'", 'sql');
+      expect(
+        spans.where((span) => span.kind == CodeKind.keyword).map((span) => span.text),
+        containsAll(<String>['select', 'from', 'where']),
+      );
+    });
+  });
+
+  // The parser tests above prove the markdown becomes the right blocks. These
+  // prove the blocks reach the screen as the styling they were given: a phone
+  // screenshot is the only other way to see colour, and it cannot tell a
+  // correct palette from a wrong one that happens to look fine.
+  group('markdown rendering', () {
+    Widget wrap(Widget child) {
+      return Directionality(
+        textDirection: TextDirection.ltr,
+        child: MediaQuery(
+          data: const MediaQueryData(),
+          child: DefaultTextStyle(
+            style: const TextStyle(fontSize: 14),
+            child: child,
+          ),
+        ),
+      );
+    }
+
+    List<InlineSpan> spansOf(WidgetTester tester) {
+      final spans = <InlineSpan>[];
+      for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+        rich.text.visitChildren((span) {
+          spans.add(span);
+          return true;
+        });
+      }
+      return spans;
+    }
+
+    testWidgets('a code block is coloured by the theme, not left plain', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          const MarkdownBody(
+            text: '```dart\nfinal a = 42; // note\n```',
+            selectable: false,
+            theme: MarkdownTheme.dark,
+          ),
+        ),
+      );
+      final colours = spansOf(
+        tester,
+      ).whereType<TextSpan>().map((span) => span.style?.color).toList();
+      expect(colours, contains(MarkdownTheme.dark.keyword));
+      expect(colours, contains(MarkdownTheme.dark.number));
+      expect(colours, contains(MarkdownTheme.dark.comment));
+      // Highlighting must not rewrite the code: the reader sees it verbatim.
+      final text = spansOf(tester)
+          .whereType<TextSpan>()
+          .map((span) => span.text ?? '')
+          .join();
+      expect(text, contains('final a = 42; // note'));
+    });
+
+    testWidgets('an unfinished reply gets a blinking caret', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          const MarkdownBody(
+            text: 'writing',
+            streaming: true,
+            selectable: false,
+            theme: MarkdownTheme.dark,
+          ),
+        ),
+      );
+      expect(find.byType(FadeTransition), findsOneWidget);
+      await tester.pumpWidget(
+        wrap(
+          const MarkdownBody(
+            text: 'writing',
+            selectable: false,
+            theme: MarkdownTheme.dark,
+          ),
+        ),
+      );
+      expect(find.byType(FadeTransition), findsNothing);
+    });
+
+    testWidgets('a finished reply is selectable and a live one is not', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          const MarkdownBody(
+            text: 'done',
+            selectable: true,
+            theme: MarkdownTheme.dark,
+          ),
+        ),
+      );
+      expect(find.byType(SelectableText), findsOneWidget);
+      await tester.pumpWidget(
+        wrap(
+          const MarkdownBody(
+            text: 'still going',
+            streaming: true,
+            selectable: false,
+            theme: MarkdownTheme.dark,
+          ),
+        ),
+      );
+      expect(find.byType(SelectableText), findsNothing);
     });
   });
 }
