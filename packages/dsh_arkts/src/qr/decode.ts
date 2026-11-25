@@ -122,14 +122,18 @@ function detectVersion(matrix: BitMatrix): number {
   const fromSize = (size - 17) / 4;
   if (fromSize < 7) return fromSize;
 
-  // Two copies of the eighteen version bits, top-right and bottom-left.
+  // Two copies of the eighteen version bits, top-right and bottom-left. Bit 0
+  // is the least significant and it sits in the first module (ISO/IEC 18004).
+  // Accumulating the other way round still matches a matrix our own encoder
+  // wrote backwards, which is exactly how a symbol that no phone could read
+  // kept passing the round-trip test.
   let rawA = 0;
   let rawB = 0;
   for (let index = 0; index < 18; index += 1) {
     const row = Math.floor(index / 3);
     const col = size - 11 + (index % 3);
-    rawA = (rawA << 1) | (isDark(matrix, row, col) ? 1 : 0);
-    rawB = (rawB << 1) | (isDark(matrix, col, row) ? 1 : 0);
+    rawA |= (isDark(matrix, row, col) ? 1 : 0) << index;
+    rawB |= (isDark(matrix, col, row) ? 1 : 0) << index;
   }
   const fromBits = readVersionBits(rawA) ?? readVersionBits(rawB);
   if (fromBits !== null && fromBits === fromSize) return fromBits;

@@ -153,3 +153,5 @@ probe/_commits*
 probe/_obj*
 probe/_revs*
 probe/_to_send*
+probe/_ours_qr.png
+probe/_ref_qr.png

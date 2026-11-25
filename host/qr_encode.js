@@ -492,9 +492,12 @@ function drawFormat(cells, mask, level) {
   for (let row = size - 7; row <= size - 1; row += 1) cells[row][8] = bit(14 - (size - 1 - row))
 
   // Second copy: along row eight under the top-right finder, then the corner.
+  // Column six is the vertical timing pattern and the format field steps over
+  // it: bit nine lives at column five, which the loop below writes. Writing it
+  // at column six instead paints a light module into the timing pattern, and a
+  // scanner reads that as a symbol whose grid does not line up.
   for (let col = size - 1; col >= size - 8; col -= 1) cells[8][col] = bit(size - 1 - col)
   cells[8][7] = bit(8)
-  cells[8][6] = bit(9)
   for (let col = 5; col >= 0; col -= 1) cells[8][col] = bit(14 - col)
   // The dark module is always set, whatever the format says.
   cells[size - 8][8] = true
@@ -505,10 +508,11 @@ function drawVersion(cells, version) {
   const size = cells.length
   const bits = versionBits(version)
   for (let index = 0; index < 18; index += 1) {
-    // The field is read most-significant bit first, so the highest bit goes in
-    // the first module. Writing it the other way round produces a symbol whose
-    // size looks right and whose version block disagrees with it.
-    const dark = ((bits >> (17 - index)) & 1) === 1
+    // Bit 0 is the least significant one and it goes in the first module, which
+    // is what ISO/IEC 18004 says and what every scanner assumes. The reverse
+    // order still looks like a plausible code: our own decoder used to read it
+    // backwards too, so round-tripping agreed while phones and WeChat refused.
+    const dark = ((bits >> index) & 1) === 1
     const row = Math.floor(index / 3)
     const col = size - 11 + (index % 3)
     cells[row][col] = dark

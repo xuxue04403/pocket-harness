@@ -193,9 +193,16 @@ cd packages/dsh_arkts; npm run test:live
 二维码编码器（`host/qr_encode.js`）和配对页都是零依赖的，与 `packages/dsh_arkts` 里
 的**解码器**互为正反：前者编出来的矩阵必须能被后者读回原文。
 
+但「互为正反」本身证明不了什么：两边一起写错时，往返测试照样是绿的。设置页的码曾经
+就是这样——版本信息块写成高位在前，解码器也按高位读，我们自己收发一致，手机和微信却
+一片扫不出。所以真正管用的裁判是外部实现，`probe/qr-external-check.mjs` 拿 `qrcode` 包
+逐格比对矩阵，装了 jsQR 时再让它读一遍渲染结果：
+
 ```powershell
-node probe/qr-encode-check.mjs   # 编码 -> 解码往返，含 v7 以上的版本块
-node probe/pair-page-check.mjs   # 设置卡片真正会拿到的票据
+node probe/qr-encode-check.mjs    # 编码 -> 解码往返，含 v7 以上的版本块
+node probe/qr-external-check.mjs  # 与外部编码器逐格比对，并让 jsQR 读渲染结果
+node probe/qr-scan-check.mjs      # 模块在屏幕上有多少像素才算扫得动
+node probe/pair-page-check.mjs    # 设置卡片真正会拿到的票据
 dart run --packages=app/.dart_tool/package_config.json probe/session-groups-check.dart
 ```
 
