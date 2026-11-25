@@ -17,6 +17,7 @@ class SessionSummary {
     this.agentAvailable = true,
     this.blank = false,
     this.lastPromptAt,
+    this.origin,
   });
 
   final String sessionId;
@@ -52,6 +53,18 @@ class SessionSummary {
 
   /// Whether a person has ever sent anything here.
   bool get used => lastPromptAt != null;
+
+  /// What started this session: `subagent` for one an agent spawned itself.
+  ///
+  /// A subagent session carries the prompt its parent wrote, so it collects a
+  /// `lastPromptAt` of its own and would otherwise pass every "somebody used
+  /// this" test. The desktop sidebar drops them by origin and shows them
+  /// nested under the parent instead; the phone has no nesting yet, so it drops
+  /// them too rather than listing 334 internal work sessions as projects.
+  final String? origin;
+
+  /// Whether an agent opened this session on its own, rather than a person.
+  bool get spawned => origin == 'subagent';
 
   /// Reads the fields the phone actually shows, tolerating anything missing.
   ///
@@ -93,6 +106,7 @@ class SessionSummary {
       lastPromptAt: prompted is num
           ? DateTime.fromMillisecondsSinceEpoch(prompted.toInt())
           : null,
+      origin: value['origin'] is String ? value['origin'] as String : null,
     );
   }
 }

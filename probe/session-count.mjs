@@ -88,6 +88,15 @@ function prompted(row) {
   return typeof metadata?.lastPromptAt === 'number'
 }
 
+// What the phone keeps: the desktop sidebar's two rules. `origin: subagent`
+// rows are an agent's own work sessions — they carry a prompt written by their
+// parent, so they look used to everything else, and the desktop drops them with
+// `if (session.origin === 'subagent') return false`.
+function shownOnPhone(row) {
+  if (row?.origin === 'subagent') return false
+  return prompted(row) || row?.blank === true
+}
+
 const snapshot = await snapshotOf()
 if (typeof snapshot.ticket !== 'string') {
   throw new Error('the Host did not hand out a ticket: ' + JSON.stringify(snapshot).slice(0, 200))
@@ -107,16 +116,21 @@ try {
   const answer = await link.rpc.call('session/list', { _request: {} }, 30000)
   const rows = Array.isArray(answer.items) ? answer.items : []
   const visible = rows.filter((row) => row.agentAvailable !== false)
+  const shown = rows.filter(shownOnPhone)
   const matching = rows.filter((row) => directoryOf(row).includes(folder))
   const matchingVisible = matching.filter((row) => row.agentAvailable !== false)
   const matchingPrompted = matching.filter((row) => prompted(row))
+  const matchingShown = matching.filter(shownOnPhone)
 
   console.log('rows the Host returned        ', rows.length)
   console.log('rows with an agent            ', visible.length)
   console.log('rows with a user prompt       ', rows.filter(prompted).length)
+  console.log('rows with origin subagent     ', rows.filter((row) => row.origin === 'subagent').length)
+  console.log('rows the phone would show     ', shown.length)
   console.log(`rows under "${folder}"`.padEnd(31), matching.length)
   console.log('  ...of those with an agent   ', matchingVisible.length)
   console.log('  ...of those with a prompt   ', matchingPrompted.length)
+  console.log('  ...of those the phone shows ', matchingShown.length)
   for (const row of matching) {
     const values = row?.projections?.values ?? {}
     const title = typeof values.title === 'string' ? values.title : '(no title)'
@@ -126,6 +140,7 @@ try {
       '  ',
       String(row.agentAvailable !== false).padEnd(5),
       String(prompted(row)).padEnd(5),
+      String(shownOnPhone(row)).padEnd(5),
       String(row.sessionId).slice(0, 16),
       (when ? new Date(when).toISOString() : 'never').padEnd(24),
       JSON.stringify(title).slice(0, 40),

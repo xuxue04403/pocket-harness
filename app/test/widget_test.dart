@@ -328,6 +328,7 @@ void main() {
       bool blank = false,
       bool agentAvailable = false,
       int? lastPromptAt,
+      String? origin,
     }) => SessionSummary(
       sessionId: id,
       title: id,
@@ -338,6 +339,7 @@ void main() {
       lastPromptAt: lastPromptAt == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(lastPromptAt),
+      origin: origin,
     );
 
     test('keeps a conversation somebody has sent a message to', () {
@@ -378,6 +380,19 @@ void main() {
       ]);
 
       expect(shown.map((session) => session.sessionId), ['old-a', 'old-b']);
+    });
+
+    test('drops subagent sessions even though they carry a prompt', () {
+      // 334 of 957 rows are sessions an agent spawned. Their parent writes the
+      // prompt, so they look used to every other test; the desktop drops them
+      // with `if (session.origin === 'subagent') return false`.
+      final shown = sessionsWorthShowing([
+        row('mine', lastPromptAt: 5000),
+        row('child', lastPromptAt: 6000, origin: 'subagent'),
+        row('child-blank', blank: true, origin: 'subagent'),
+      ]);
+
+      expect(shown.map((session) => session.sessionId), ['mine']);
     });
 
     test('returns an empty list unchanged', () {

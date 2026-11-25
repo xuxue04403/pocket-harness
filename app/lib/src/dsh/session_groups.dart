@@ -105,11 +105,18 @@ Set<String> projectsFoldedOnOpen(List<SessionGroup> groups) {
 /// screen, or the button looks broken.
 ///
 /// So: a session stays when somebody has talked to it, or when nothing has
-/// happened in it yet. Only "a turn started and no person ever spoke" is
-/// dropped. `probe/session-count.mjs` prints these counts against a live Host
-/// so none of this has to be taken on faith.
+/// happened in it yet. Two kinds are dropped — "a turn started and no person
+/// ever spoke", and anything an agent spawned for itself. `probe/session-count.mjs`
+/// prints these counts against a live Host so none of this has to be taken on
+/// faith.
+///
+/// The subagent rule comes straight from the desktop's `sessionVisible`:
+/// `if (session.origin === 'subagent') return false`. Of 957 rows on the machine
+/// this was written against, 334 are subagent sessions, and they *do* carry a
+/// `lastPromptAt` (their parent wrote the prompt), so without this they would
+/// all appear as top-level conversations in the phone's tree.
 List<SessionSummary> sessionsWorthShowing(List<SessionSummary> sessions) {
   return sessions
-      .where((session) => session.used || session.blank)
+      .where((session) => !session.spawned && (session.used || session.blank))
       .toList();
 }

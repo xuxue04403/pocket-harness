@@ -341,16 +341,47 @@ List<InlineSpan> _spans(
 }
 
 /// A code block with a language tag and a copy button, on a dark card.
-class _CodeCard extends StatelessWidget {
+///
+/// Stateful only to cache the token scan. A streaming reply is rebuilt on every
+/// delta, and the whole reply is re-parsed each time, so this widget is
+/// constructed again and again with the same code for every block except the
+/// one being typed into. Recolouring them all cost about 20 ms per frame for a
+/// long reply — over a 16.7 ms frame — while the block that actually changed
+/// costs under a millisecond. [highlightCode] is pure, so keying the cache on
+/// (code, language) is enough.
+class _CodeCard extends StatefulWidget {
   const _CodeCard({required this.block, required this.theme});
 
   final MdCodeBlock block;
   final MarkdownTheme theme;
 
   @override
+  State<_CodeCard> createState() => _CodeCardState();
+}
+
+class _CodeCardState extends State<_CodeCard> {
+  List<CodeSpan>? _spans;
+  String? _spansFor;
+  String? _spansLanguage;
+
+  List<CodeSpan> _highlighted() {
+    final language = widget.block.language;
+    if (_spans != null && _spansFor == widget.block.code && _spansLanguage == language) {
+      return _spans!;
+    }
+    final spans = highlightCode(widget.block.code, language);
+    _spans = spans;
+    _spansFor = widget.block.code;
+    _spansLanguage = language;
+    return spans;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final theme = widget.theme;
+    final block = widget.block;
     final language = block.language;
-    final spans = highlightCode(block.code, language);
+    final spans = _highlighted();
     final lines = block.code.isEmpty ? 1 : '\n'.allMatches(block.code).length + 1;
 
     return ClipRRect(

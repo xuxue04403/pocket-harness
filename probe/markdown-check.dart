@@ -94,6 +94,26 @@ void main() {
     equal(list.items[1].number, 4);
   });
 
+  check('a blank line between items does not split the list', () {
+    // Loose lists are how people write when items wrap. Treating the blank as
+    // the end of the list produced three one-item lists, so an ordered list
+    // numbered 1. 1. 1. and the spacing grew a paragraph gap between items.
+    final blocks = parseMarkdown('1. one\n\n2. two\n\n3. three');
+    final list = blocks.single as MdListBlock;
+    equal(list.ordered, true);
+    equal(list.items.length, 3);
+    equal(list.items.map((item) => item.number).toList(), [1, 2, 3]);
+    final bullets = parseMarkdown('- a\n\n- b');
+    equal((bullets.single as MdListBlock).items.length, 2);
+  });
+
+  check('a blank line after the last item still ends the list', () {
+    final blocks = parseMarkdown('- one\n\nplain text');
+    equal(blocks.length, 2);
+    equal((blocks.first as MdListBlock).items.length, 1);
+    equal(inlineToPlainText((blocks.last as MdParagraph).spans), 'plain text');
+  });
+
   check('a quote keeps its paragraphs', () {
     final blocks = parseMarkdown('> first\n>\n> second');
     final quote = blocks.single as MdQuote;

@@ -87,12 +87,17 @@ void main() {
   });
 
   check('yaml: a hash inside a word is not a comment', () {
+    // `#` is only a comment at the start of a line or after whitespace. The
+    // first version listed '#' as a line comment and tried to enforce that in a
+    // later branch, which could never run: the scanner jumped on the '#' before
+    // any contextual test. Checking that the whole `sha256#1` is not a comment
+    // missed it, because the comment span was `#1`. Assert on the fragments.
     const code = 'key: sha256#1\n# real comment\nlist:\n  - one\n';
     final spans = highlightCode(code, 'yaml');
     equal(rebuild(spans), code);
     final comments = kindsOf(spans, CodeKind.comment);
+    equal(comments.any((text) => text.contains('#1')), false);
     equal(comments.contains('# real comment'), true);
-    equal(comments.contains('sha256#1'), false);
   });
 
   check('sql: keywords are case-insensitive by table, strings keep quotes', () {

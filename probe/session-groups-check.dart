@@ -113,6 +113,7 @@ void main() {
     bool blank = false,
     bool agentAvailable = false,
     int? lastPromptAt,
+    String? origin,
   }) => SessionSummary(
     sessionId: id,
     title: id,
@@ -123,6 +124,7 @@ void main() {
     lastPromptAt: lastPromptAt == null
         ? null
         : DateTime.fromMillisecondsSinceEpoch(lastPromptAt),
+    origin: origin,
   );
   check(
     'keeps a conversation somebody spoke in',
@@ -148,6 +150,14 @@ void main() {
       row(id: 'a', lastPromptAt: 1000),
       row(id: 'b', lastPromptAt: 2000),
     ]).map((s) => s.sessionId).join(',') == 'a,b',
+  );
+  check(
+    'drops subagent sessions, which carry a prompt but were never a person',
+    sessionsWorthShowing([
+      row(id: 'mine', lastPromptAt: 5000),
+      row(id: 'child', lastPromptAt: 6000, origin: 'subagent'),
+      row(id: 'other', origin: 'subagent', blank: true),
+    ]).map((s) => s.sessionId).join(',') == 'mine',
   );
   check('handles an empty list', sessionsWorthShowing(const []).isEmpty);
   stdout.writeln('');

@@ -134,7 +134,12 @@ const _rules = <String, _Rules>{
     literals: {'true', 'false', 'null'},
   ),
   'yaml': _Rules(
-    lineComments: ['#'],
+    // No `lineComments` here on purpose. In YAML a `#` only starts a comment at
+    // the start of a line or after whitespace, so `sha256#1` is one scalar, not
+    // a value followed by a comment. Listing '#' as a line comment would make
+    // the scanner jump on it before any contextual check could run — which is
+    // exactly what the special case below cannot undo, since it would never be
+    // reached.
     strings: [('"', '"'), ("'", "'")],
     literals: {'true', 'false', 'null', 'yes', 'no', 'on', 'off'},
   ),
@@ -328,10 +333,12 @@ List<CodeSpan> highlightCode(String code, String? language) {
 
   var i = 0;
   while (i < code.length) {
-    final rest = code.substring(i);
-
+    // Checks run against `code` at an offset, not against `code.substring(i)`:
+    // the substring costs a copy, and doing it once per character made an
+    // 800-line block take 100 ms — the whole budget for one frame of a
+    // streaming reply — for a token scan that is otherwise linear.
     final lineComment = rules.lineComments.firstWhere(
-      (marker) => rest.startsWith(marker),
+      (marker) => code.startsWith(marker, i),
       orElse: () => '',
     );
     if (lineComment.isNotEmpty) {
@@ -343,7 +350,7 @@ List<CodeSpan> highlightCode(String code, String? language) {
     }
 
     final block = rules.blockComment;
-    if (block != null && rest.startsWith(block.$1)) {
+    if (block != null && code.startsWith(block.$1, i)) {
       final close = code.indexOf(block.$2, i + block.$1.length);
       final stop = close < 0 ? code.length : close + block.$2.length;
       emit(code.substring(i, stop), CodeKind.comment);
@@ -353,7 +360,7 @@ List<CodeSpan> highlightCode(String code, String? language) {
 
     var opened = false;
     for (final quote in rules.strings) {
-      if (!rest.startsWith(quote.$1)) continue;
+      if (!code.startsWith(quote.$1, i)) continue;
       final end = code.indexOf(quote.$2, i + quote.$1.length);
       final stop = end < 0 ? code.length : end + quote.$2.length;
       emit(code.substring(i, stop), CodeKind.string);
@@ -366,7 +373,7 @@ List<CodeSpan> highlightCode(String code, String? language) {
     final char = code[i];
     if (char == '#' && name == 'yaml') {
       // A YAML comment only starts at the beginning of a line or after space;
-      // `sha256#1` is not a comment.
+      // `sha256#1` is not a comment. This is why yaml has no `lineComments`.
       final before = i == 0 ? ' ' : code[i - 1];
       if (before == ' ' || before == '\n') {
         final end = code.indexOf('\n', i);

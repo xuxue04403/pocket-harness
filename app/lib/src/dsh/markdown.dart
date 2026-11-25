@@ -242,16 +242,27 @@ List<MdBlock> parseMarkdown(String text) {
     final bullet = RegExp(r'^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$').firstMatch(line);
     if (bullet != null) {
       flushParagraph();
+      final itemLine = RegExp(r'^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$');
       final items = <MdListItem>[];
       var ordered = RegExp(r'\d').hasMatch(bullet.group(2)!.substring(0, 1));
       while (index < lines.length) {
-        final match = RegExp(r'^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$').firstMatch(lines[index]);
+        // A blank line between items belongs to the list, not between two
+        // lists. Ending the block there restarted the numbering of every
+        // ordered list ("1. one / 1. two / 1. three") and put a paragraph gap
+        // where the writer had asked for spacing.
+        var lookahead = index;
+        while (lookahead < lines.length && lines[lookahead].trim().isEmpty) {
+          lookahead += 1;
+        }
+        if (lookahead >= lines.length) break;
+        final match = itemLine.firstMatch(lines[lookahead]);
         if (match == null) break;
         final indent = match.group(1)!.replaceAll('\t', '  ').length;
         final marker = match.group(2)!;
         final isOrdered = RegExp(r'\d').hasMatch(marker.substring(0, 1));
         // A list that changes marker style starts a different list.
         if (items.isNotEmpty && isOrdered != ordered) break;
+        index = lookahead + 1;
         final number = isOrdered ? int.tryParse(marker.replaceAll(RegExp(r'[.)]'), '')) : null;
         items.add(
           MdListItem(
@@ -260,15 +271,6 @@ List<MdBlock> parseMarkdown(String text) {
             number: number,
           ),
         );
-        index += 1;
-        // A blank line ends the list unless the next line is another item.
-        if (index < lines.length && lines[index].trim().isEmpty) {
-          final ahead = index + 1;
-          if (ahead < lines.length &&
-              RegExp(r'^(\s*)([-*+]|\d{1,9}[.)])\s+').hasMatch(lines[ahead]) == false) {
-            break;
-          }
-        }
       }
       blocks.add(MdListBlock(items: items, ordered: ordered));
       continue;
