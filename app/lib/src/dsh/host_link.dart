@@ -14,6 +14,8 @@ class SessionSummary {
     required this.updatedAt,
     required this.running,
     this.cwd,
+    this.agentAvailable = true,
+    this.blank = false,
   });
 
   final String sessionId;
@@ -21,6 +23,21 @@ class SessionSummary {
   final DateTime updatedAt;
   final bool running;
   final String? cwd;
+
+  /// Whether the Host ever put an agent in this session.
+  ///
+  /// DSH keeps every session it has created a record for, but the desktop
+  /// sidebar only lists the ones it can actually open. A phone that lists the
+  /// rest shows rows the computer never showed — a directory can pick up seven
+  /// of them and look like the two machines are out of sync when they are not.
+  final bool agentAvailable;
+
+  /// Whether the session is still an empty seed with no first turn.
+  ///
+  /// A seed is not noise on its own: "new session" creates one and it must stay
+  /// visible until it is used. It only becomes noise when it never got an agent,
+  /// because then nothing in the world will open it.
+  final bool blank;
 
   /// Reads the fields the phone actually shows, tolerating anything missing.
   ///
@@ -36,6 +53,16 @@ class SessionSummary {
     final map = values is Map<String, Object?> ? values : const <String, Object?>{};
     final title = map['title'];
     final workingDirectory = map['workingDirectory'];
+    // Not every row carries `projections` — the ones that never got an agent
+    // come back with only the top-level fields, and the directory is in `cwd`
+    // there. Reading the nested key alone filed those sessions under "no
+    // directory", which is the other half of why the phone's tree did not look
+    // like the computer's.
+    final directory = workingDirectory is String && workingDirectory.isNotEmpty
+        ? workingDirectory
+        : value['cwd'] is String && (value['cwd'] as String).isNotEmpty
+        ? value['cwd'] as String
+        : null;
     final updated = value['updatedAt'];
     return SessionSummary(
       sessionId: id,
@@ -44,7 +71,9 @@ class SessionSummary {
           ? DateTime.fromMillisecondsSinceEpoch(updated.toInt())
           : DateTime.fromMillisecondsSinceEpoch(0),
       running: value['running'] == true,
-      cwd: workingDirectory is String ? workingDirectory : null,
+      cwd: directory,
+      agentAvailable: value['agentAvailable'] != false,
+      blank: value['blank'] == true,
     );
   }
 }

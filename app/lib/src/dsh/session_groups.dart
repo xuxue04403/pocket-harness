@@ -82,3 +82,28 @@ String basename(String path) {
 Set<String> projectsFoldedOnOpen(List<SessionGroup> groups) {
   return groups.map((group) => group.key).toSet();
 }
+
+/// The sessions worth a row on the phone, which is what the desktop sidebar
+/// lists.
+///
+/// DSH answers `session/list` with every session it ever created — 941 of them
+/// on the machine this was written against, of which only 3 ever got an agent. A
+/// folder where the desktop listed one session came back with nine, which read
+/// as the phone and the computer disagreeing about the same folder.
+///
+/// Seven of those nine are start-up failures, not conversations: the same prompt
+/// was queued eight times in an hour, each turn began, and no agent was ever
+/// bound — so each has a user row carrying that prompt as its title, and
+/// `agentAvailable` false. None of them can be opened (the Host has no agent to
+/// resume), and the desktop never lists them. `blank` cannot stand in for this
+/// check: those rows carry `blank: false` because a prompt landed in them, which
+/// is exactly what makes them look real in a list. `probe/session-count.mjs`
+/// prints these counts against a live Host so none of this has to be taken on
+/// faith.
+///
+/// This flag is the one the desktop filters on, so it is the one the phone
+/// filters on too. It is read as `!= false` rather than `== true` on purpose:
+/// sessions the Host reports without the field at all are older, real sessions.
+List<SessionSummary> sessionsWorthShowing(List<SessionSummary> sessions) {
+  return sessions.where((session) => session.agentAvailable).toList();
+}

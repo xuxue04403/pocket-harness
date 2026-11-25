@@ -2,6 +2,15 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## v0.1.1
+
+修两处手机上真能碰到的问题：会话树里会多出电脑侧栏看不见的行，以及扫码配对的码本身读不出来。
+
+### 能做什么
+
+- **会话树与电脑侧栏对齐**：`session/list` 会回传 Host 建过的每一条记录，包括启动失败的——提示词已经进了 turn、agent 却没绑上。这台机器上 941 行里只有 3 行真的带 agent，`D:\IDE\zpan` 一度在手机上显示 9 条、在电脑侧栏上只有 1 条——看着就是两端不同步，其实是手机把打不开的记录也列了。现在按 `agentAvailable` 过滤，电脑上看得见的手机上才看得见。这个字段按 `!= false` 读而不是 `== true`：Host 根本没报这个字段的是更老的、真实的会话，不能连带删掉。
+- **二维码能扫出来了**：两个码元写错——版本信息块写了高位在前（规范是低位在前，第 0 位进第一格），格式信息第 9 位画在了第 6 列的竖直时序线上（该落在第 5 列）。错得刚好与自家解码器互为反函数，所以「编码再解码」的往返测试一直通过，而手机与微信一个都读不出。`probe/qr-external-check.mjs` 现在拿 `qrcode` 包与 jsQR 当外部裁判逐格比对，覆盖 v1 到 v26，也包括 v7 以上才有的版本块。
+
 ## v0.1.0-beta
 
 第一个可以装到手机上用的测试版。范围只有一件事：**用手机远程操控跑在电脑上的 DeepSeek Harness**。
@@ -61,4 +70,4 @@
 | Dart 协议层 | 49 | `cd packages\dsh_link; dart analyze; dart test` |
 | Host 插件与中继 | 41 | `node --test host` |
 | TypeScript 协议层（鸿蒙共用） | 23 套 | `cd packages\dsh_arkts; npm test` |
-| Flutter 客户端 | 138 | `cd app; flutter analyze; flutter test` |
+| Flutter 客户端 | 146 | `cd app; flutter analyze; flutter test` |

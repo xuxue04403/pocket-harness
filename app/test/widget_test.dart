@@ -119,7 +119,8 @@ void main() {
     });
   });
 
-  group('SessionSummary.fromJson', () {    test('reads the title and directory out of projections', () {
+  group('SessionSummary.fromJson', () {
+    test('reads the title and directory out of projections', () {
       final summary = SessionSummary.fromJson({
         'sessionId': 's1',
         'updatedAt': 1700000000000,
@@ -148,6 +149,54 @@ void main() {
     test('rejects an entry without a session id', () {
       expect(SessionSummary.fromJson({'updatedAt': 0}), isNull);
       expect(SessionSummary.fromJson('not a map'), isNull);
+    });
+
+    test('reads the directory from cwd when the row carries no projections', () {
+      final summary = SessionSummary.fromJson({
+        'sessionId': 's3',
+        'updatedAt': 1700000000000,
+        'agentAvailable': true,
+        'blank': false,
+        'cwd': r'D:\IDE\zpan',
+      });
+
+      expect(summary, isNotNull);
+      expect(summary!.title, '未命名会话');
+      expect(summary.cwd, r'D:\IDE\zpan');
+    });
+
+    test('prefers the projected directory over cwd', () {
+      final summary = SessionSummary.fromJson({
+        'sessionId': 's4',
+        'updatedAt': 1700000000000,
+        'cwd': r'D:\stale',
+        'projections': {
+          'values': {'title': 'Analyse a transcript', 'workingDirectory': r'D:\IDE\zpan'},
+        },
+      });
+
+      expect(summary!.title, 'Analyse a transcript');
+      expect(summary.cwd, r'D:\IDE\zpan');
+    });
+
+    test('keeps an agent-less, still blank session flagged as a seed', () {
+      final seeded = SessionSummary.fromJson({
+        'sessionId': 's5',
+        'updatedAt': 1700000000000,
+        'agentAvailable': false,
+        'blank': true,
+        'cwd': r'D:\IDE\zpan',
+      });
+
+      expect(seeded!.agentAvailable, isFalse);
+      expect(seeded.blank, isTrue);
+    });
+
+    test('assumes a session is real when the Host omits the flags', () {
+      final summary = SessionSummary.fromJson({'sessionId': 's6', 'updatedAt': 0});
+
+      expect(summary!.agentAvailable, isTrue);
+      expect(summary.blank, isFalse);
     });
   });
 
@@ -226,6 +275,47 @@ void main() {
 
       expect(projectsFoldedOnOpen(groups), {r'D:\IDE\dsh-bot', ''});
       expect(projectsFoldedOnOpen(const []), isEmpty);
+    });
+  });
+
+  group('sessionsWorthShowing', () {
+    SessionSummary row(String id, {required bool agentAvailable, bool blank = false}) =>
+        SessionSummary(
+          sessionId: id,
+          title: id,
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+          running: false,
+          agentAvailable: agentAvailable,
+          blank: blank,
+        );
+
+    test('keeps sessions the desktop sidebar would list', () {
+      final shown = sessionsWorthShowing([row('used', agentAvailable: true)]);
+
+      expect(shown.map((session) => session.sessionId), ['used']);
+    });
+
+    test('drops sessions no agent was ever attached to', () {
+      // The reported shape: one real session and seven rows where a prompt was
+      // queued and no agent bound, all in the same folder. The desktop listed
+      // one; the phone listed nine.
+      final shown = sessionsWorthShowing([
+        row('real', agentAvailable: true),
+        row('failed-start', agentAvailable: false, blank: false),
+        row('failed-start', agentAvailable: false, blank: false),
+      ]);
+
+      expect(shown.map((session) => session.sessionId), ['real']);
+    });
+
+    test('drops a blank seed as well, agent or not', () {
+      final shown = sessionsWorthShowing([row('seed', agentAvailable: false, blank: true)]);
+
+      expect(shown, isEmpty);
+    });
+
+    test('returns an empty list unchanged', () {
+      expect(sessionsWorthShowing(const []), isEmpty);
     });
   });
 

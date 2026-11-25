@@ -87,7 +87,10 @@ class _SessionsPageState extends State<SessionsPage> {
         _link = link;
       });
       await _adoptRefreshedTicket(link);
-      final sessions = await link.sessions();
+      // `session/list` carries every record the Host ever made, seed rows and
+      // abandoned ones included: a folder the desktop shows one session for
+      // came back as nine here. Show what the sidebar shows.
+      final sessions = sessionsWorthShowing(await link.sessions());
       _seedCollapsed(sessions);
       // Kept for the search page, which labels a hit with the title a person
       // knows rather than a session id.

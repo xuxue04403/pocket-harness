@@ -107,6 +107,56 @@ void main() {
   );
   check('folds nothing for an empty list', projectsFoldedOnOpen(const []).isEmpty);
 
+  stdout.writeln('sessionsWorthShowing');
+  SessionSummary row({
+    required String id,
+    required bool agentAvailable,
+    required bool blank,
+  }) => SessionSummary(
+    sessionId: id,
+    title: id,
+    updatedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+    running: false,
+    agentAvailable: agentAvailable,
+    blank: blank,
+  );
+  check(
+    'keeps what the desktop lists',
+    sessionsWorthShowing([
+      row(id: 'used', agentAvailable: true, blank: false),
+    ]).map((s) => s.sessionId).join(',') == 'used',
+  );
+  check(
+    'drops agent-less seeds',
+    sessionsWorthShowing([
+      row(id: 'real', agentAvailable: true, blank: false),
+      row(id: 'seed', agentAvailable: false, blank: true),
+      row(id: 'seed', agentAvailable: false, blank: true),
+    ]).map((s) => s.sessionId).join(',') == 'real',
+  );
+  check(
+    'drops rows with no agent attached',
+    sessionsWorthShowing([
+      row(id: 'real', agentAvailable: true, blank: false),
+      row(id: 'seed', agentAvailable: false, blank: true),
+      row(id: 'seed', agentAvailable: false, blank: true),
+    ]).map((s) => s.sessionId).join(',') == 'real',
+  );
+  check(
+    'drops an agent-less row that already has a prompt',
+    sessionsWorthShowing([
+      row(id: 'real', agentAvailable: true, blank: false),
+      row(id: 'abandoned', agentAvailable: false, blank: false),
+    ]).map((s) => s.sessionId).join(',') == 'real',
+  );
+  check(
+    'keeps a session with an agent but no prompt yet',
+    sessionsWorthShowing([
+      row(id: 'fresh', agentAvailable: true, blank: true),
+    ]).length == 1,
+  );
+  check('handles an empty list', sessionsWorthShowing(const []).isEmpty);
+
   stdout.writeln('');
   if (failures == 0) {
     stdout.writeln('ALL SESSION GROUP CHECKS PASS');

@@ -2,9 +2,9 @@
 
 用手机操控跑在电脑上的 DeepSeek Harness，链路端到端加密。
 
-**当前版本：v0.1.0-beta**（范围只有「远程操控电脑」，更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+**当前版本：v0.1.1**（范围只有「远程操控电脑」，更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
-安装包：[release 页](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.0-beta) ·
+安装包：[release 页](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.1) ·
 源码：`git clone https://github.com/xuxue04403/pocket-harness.git`
 
 工作区、智能体运行时与会话历史全部留在电脑上，手机只是一扇窗：扫一次码完成配对，之后就能在外面列会话、读记录、发提示词——同一个局域网里直连，跨网络时走你自己部署的中继。
@@ -75,14 +75,14 @@ cd pocket-harness
 ```
 
 默认分支是 `master`。预编译包在
-[v0.1.0-beta release](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.0-beta) 页。
+[v0.1.1 release](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.1) 页。
 
-没网或者只想要离线副本时，release 附件里还有一个 `pocket-harness-0.1.0-beta.bundle`，
-里面是完整历史与 `v0.1.0-beta` 标签，可以不联网直接克隆出来构建：
+没网或者只想要离线副本时，release 附件里还有一个 `pocket-harness-0.1.1.bundle`，
+里面是完整历史与 `v0.1.1` 标签，可以不联网直接克隆出来构建：
 
 ```bash
-git clone pocket-harness-0.1.0-beta.bundle pocket-harness
-git bundle verify pocket-harness-0.1.0-beta.bundle   # 校验完整历史
+git clone pocket-harness-0.1.1.bundle pocket-harness
+git bundle verify pocket-harness-0.1.1.bundle   # 校验完整历史
 ```
 
 ### 1. 在电脑上装 Host 插件
@@ -108,7 +108,7 @@ flutter pub get
 flutter build apk --release --split-per-abi
 ```
 
-三份按 CPU 架构拆开的包（v0.1.0-beta 实测）：`app-arm64-v8a-release.apk`（12.3 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（11.5 MB，老设备）、`app-x86_64-release.apk`（12.9 MB，模拟器）。不拆包的单包约 17 MB。
+三份按 CPU 架构拆开的包（v0.1.1 实测）：`app-arm64-v8a-release.apk`（12.9 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（12.1 MB，老设备）、`app-x86_64-release.apk`（13.4 MB，模拟器）。不拆包的单包约 17 MB。
 
 > 只有「在手机上本机跑 dsh」那条路需要 proot 的二进制（`app/android/app/src/main/jniLibs/<abi>/lib*.so`），
 > 它体积不小、且带 GPL 条款，所以不入库；要用先跑一次 `tools/proot-fetch.ps1` 现取。
@@ -119,7 +119,7 @@ flutter build apk --release --split-per-abi
 > 没有 `key.properties` 时回落到 debug 签名，只为让 `flutter run --release` 能跑，不能分发。
 > 实测过的两条分支：无 key.properties → 构建成功（66.1 MB 单包）；有 key.properties + 自建
 > keystore → `apksigner verify --print-certs` 显示的是 keystore 里的 DN，证明真走了 release 签名。
-> 当前 v0.1.0-beta 的 APK 用项目自建 keystore 签（`CN=Pocket Harness`，指纹见 [CHANGELOG.md](CHANGELOG.md)），
+> 当前 v0.1.1 的 APK 用项目自建 keystore 签（`CN=Pocket Harness`，指纹见 [CHANGELOG.md](CHANGELOG.md)），
 > 同一 key 的后续版本可覆盖安装。要发布到应用商店请换成自己的 keystore。
 
 ### 3. 配对
@@ -155,7 +155,7 @@ cd packages\dsh_link; dart analyze; dart test
 cd relay; npm install; cd ..      # 中继的测试会 import relay/server.mjs，它依赖 ws
 node --test host
 
-# Flutter 客户端：138 个测试
+# Flutter 客户端：146 个测试
 cd app; flutter analyze; flutter test
 ```
 
@@ -224,8 +224,8 @@ CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作�
 
 ```powershell
 $env:POCKET_HARNESS_TOKEN_FILE = "probe/_gh_token.txt"   # 细粒度 PAT，需 Contents 读写
-node tools/publish-git.mjs     --owner <账号> --branch master --tag v0.1.0-beta
-node tools/publish-release.mjs --owner <账号> --tag v0.1.0-beta
+node tools/publish-git.mjs     --owner <账号> --branch master --tag <tag>
+node tools/publish-release.mjs --owner <账号> --tag <tag>
 ```
 
 两个脚本都是幂等的：远端已经一致就跳过，release 已存在就只补缺失的附件。
@@ -234,21 +234,21 @@ node tools/publish-release.mjs --owner <账号> --tag v0.1.0-beta
 APK，而 `SHA256SUMS.txt` 已经指向新的字节，两边对不上。换产物时按这个顺序来：
 
 ```powershell
-node tools/reset-release-assets.mjs --owner <账号> --tag v0.1.0-beta   # 先清空旧附件
-node tools/publish-release.mjs      --owner <账号> --tag v0.1.0-beta
-node tools/verify-release.mjs       --owner <账号> --tag v0.1.0-beta   # 把附件下回来重算
+node tools/reset-release-assets.mjs --owner <账号> --tag <tag>   # 先清空旧附件
+node tools/publish-release.mjs      --owner <账号> --tag <tag>
+node tools/verify-release.mjs       --owner <账号> --tag <tag>   # 把附件下回来重算
 ```
 
 `verify-release.mjs` 优先拿 GitHub 返回的 `asset.digest` 比对，只有服务端没给 digest 才真把附件下回来算 sha256——而不是相信上传返回值。本机到 `github.com` 下载时经常连不上，能少一趟就少一趟。
 
 `publish-git.mjs` 的分支与 tag 都走 git 线上协议的 `receive-pack`（传输层在 [tools/github-transport.mjs](tools/github-transport.mjs)），isomorphic-git 只用来遍历对象和打包：
 
-- 它的 `push` 只处理 `refs/heads/*`，refspec 里写 `refs/tags/x:refs/tags/x` 会被**静默忽略**（返回体里连这个 ref 都不出现，而 `ok: true`）；REST 的建 ref 又要求 tag 对象先存在于远端。所以注解 tag 本体作为单对象 packfile 推上去——远端得到的 sha 与本地逐字节相同，`git clone --branch v0.1.0-beta` 才对得上。
+- 它的 `push` 只处理 `refs/heads/*`，refspec 里写 `refs/tags/x:refs/tags/x` 会被**静默忽略**（返回体里连这个 ref 都不出现，而 `ok: true`）；REST 的建 ref 又要求 tag 对象先存在于远端。所以注解 tag 本体作为单对象 packfile 推上去——远端得到的 sha 与本地逐字节相同，`git clone --branch <tag>` 才对得上。
 - 它在「远端已经一致、无事可做」时会挂着等超时，所以脚本先查远端 sha 再决定要不要推。
 
 `github-transport.mjs` 之所以存在，是因为这台机器上 `github.com` / `api.github.com` 的默认 DNS 地址经常直接 reset 或超时，而同一个域名解析出的别的边缘地址是通的。它会把 DNS 结果和一份内置地址表合起来逐个 TLS 握手探活，只留下能连的再用；请求必须带显式 `Host:` 头，正文按 16 KiB 分片写（一次性 write 会被中途 reset）。
 
-tag 指到旧提交时，`--force` 会覆盖远端：先 `git tag -d v0.1.0-beta` 再 `git tag -a v0.1.0-beta -m "Pocket Harness v0.1.0-beta"`，别用 `git tag -f` 重打在同一提交上——那样 sha 会变而内容不变，白推一次。
+tag 指到旧提交时，`--force` 会覆盖远端：先 `git tag -d <tag>` 再 `git tag -a <tag> -m "Pocket Harness <tag>"`，别用 `git tag -f` 重打在同一提交上——那样 sha 会变而内容不变，白推一次。
 
 
 ## 安全
