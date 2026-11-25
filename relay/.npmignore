@@ -1,0 +1,9 @@
+# 白名单：只发布中继服务本身。
+# relay/package.json 的 files 字段也会生效，但 npm pack 时不认仓库根的 .gitignore，
+# 所以这里必须再显式排除一次 .relay-token（真实口令，只存在于跑中继的那台机器上）。
+# 走白名单而不是黑名单：以后往 relay/ 里加的临时文件默认不会进包。
+*
+!package.json
+!server.mjs
+!run.mjs
+!.npmignore

@@ -175,13 +175,141 @@ flutter build apk --release --split-per-abi
 ```bash
 cd relay
 npm install
-$env:POCKET_HARNESS_RELAY_TOKEN = "<至少 16 字符的随机串>"
-node run.mjs          # 监听 8080，/healthz 可探活
+export POCKET_HARNESS_RELAY_TOKEN='<至少 16 字符的随机串>'
+node run.mjs          # 监听 0.0.0.0:8080，GET /healthz 可探活
 ```
 
-然后在 Host 插件的配置里设置 `relayUrl`（例如 `wss://relay.example.com/relay`）与 `relayToken`（就是上面那个 `POCKET_HARNESS_RELAY_TOKEN` 的值）并重启 Harness。之后手机在局域网内会直连，出了局域网就自动走中继。中继只转发密文，解不开任何一帧。
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `POCKET_HARNESS_RELAY_TOKEN` | 必填 | 少于 16 字符直接退出；Host 与中继共享它 |
+| `PORT` | `8080` | 传 `0` 会打印内核分配的真实端口 |
+| `HOST` | `0.0.0.0` | 放在反向代理后面时改成 `127.0.0.1` |
 
-这套链路已经在一台只开放 443 的云主机上真跑通过：中继监听 `127.0.0.1:8080`，由 nginx 在 443 的子路径上反代，Host 在本机，手机侧从公网完成握手并读到了会话列表。反向代理片段、systemd 单元、以及三个容易踩的坑（符号链接站点配置、必须插进 `listen 443` 的 server 块、配置可能是非 UTF-8）都写在 [docs/relay-deployment.md](docs/relay-deployment.md)，部署脚本是 `tools/deploy-relay.py`；两条自检命令 `probe/relay-ws-check.mjs`（WebSocket 升级）与 `probe/relay-e2e.mjs`（经公网中继握手并调 `session/list`）不需要手机就能跑。
+启动后打印 `relay listening on <host>:<port>`；`GET /healthz` 返回 `ok rooms=N`。
+也可以直接用 release 里的包：`npm install ./pocket-harness-relay-0.1.1.tgz`。
+
+#### 部署到自己的 VPS
+
+**先决定这台机器对外开放什么端口。** 中继需要手机能访问到一个 WebSocket 地址，
+用 443 最省事：防火墙只开 443，中继监听 `127.0.0.1:8080`，nginx 在 443 上按路径反代。
+**不要让中继自己占对外端口**，否则要么多开防火墙条目，要么和已有站点抢 443。
+
+**1. 上层依赖**
+
+需要 Node ≥ 20、nginx、systemd。装 Node：
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+**2. 生成口令**
+
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+```
+
+记下来。**同一个值要用两次**：一次给中继进程的环境变量，一次填进电脑上 Host 插件的
+`relayToken`。它是两台机器互相认证的凭据，别提交进仓库、别粘进聊天记录。
+
+**3. 放出中继文件并建 systemd 单元**
+
+```bash
+sudo mkdir -p /opt/pocket-harness-relay
+cd /opt/pocket-harness-relay
+sudo npm install ./pocket-harness-relay-0.1.1.tgz    # 或把仓库的 relay/ 整个拷上来再 npm install
+```
+
+```ini
+# /etc/systemd/system/pocket-harness-relay.service
+[Unit]
+Description=Pocket Harness relay
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/pocket-harness-relay
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=8080
+Environment=POCKET_HARNESS_RELAY_TOKEN=<第 2 步那个口令>
+ExecStart=/usr/bin/node node_modules/pocket-harness-relay/run.mjs
+Restart=always
+NoNewPrivileges=yes
+ProtectSystem=full
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`HOST=127.0.0.1` 是关键：中继只听本机，外面进不来，入口只有 nginx 那个 443。
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now pocket-harness-relay
+curl -s http://127.0.0.1:8080/healthz     # 应得 ok rooms=0
+```
+
+**4. nginx 在 443 上开一条子路径**
+
+找已经监听 443 的那个 server 块（不是 `listen 80` 那个重定向块），往里面加：
+
+```nginx
+location = /ph-relay/healthz {
+    proxy_pass http://127.0.0.1:8080/healthz;
+    access_log off;
+}
+
+location /ph-relay {
+    proxy_pass http://127.0.0.1:8080/relay;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_next_upstream off;
+}
+```
+
+`proxy_pass` 末尾那个 `/relay` 是前缀改写，不能少：中继自己的 WebSocket 路径就是
+`/relay`，健康检查是 `/healthz`。少写了，握手会打到中继的 404 上，现象是「连上了但立刻
+断」，日志里看不到原因。`/healthz` 必须单独一条，否则会被前缀改写带成 `/relay/healthz`。
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl -s https://your.domain/ph-relay/healthz    # 应得 ok rooms=0
+```
+
+**5. 让电脑上的 Host 连上中继**
+
+在 Harness 的 profile 配置里（`~/.dsh/profiles/<profile>/cordis.patch.yml`）加：
+
+```yaml
+- id: pocket-harness-host
+  config:
+    relayUrl: wss://your.domain/ph-relay
+    relayToken: <第 2 步那个口令>
+```
+
+开关一次插件让它重载。日志里会出现 `joined the relay room`，设置页「手机配对」卡片上
+「外网可达」变成「是（经中继）」。
+
+**6. 自检（不需要手机）**
+
+```bash
+node probe/relay-ws-check.mjs      # 443 → nginx → 中继 的 WebSocket 升级
+node probe/relay-e2e.mjs           # 经公网中继完成 Noise 握手并调用 session/list
+```
+
+第二条成功会打印 `THE PHONE CAN REACH THIS HOST THROUGH THE PUBLIC RELAY`。
+它用的是运行中 Host 自己的配对票据，所以验的就是手机真正走的那条路。
+
+> 上面这套形状在真实 VPS 上跑通过：只开 443、中继监听 `127.0.0.1:8080`、
+> nginx 按子路径反代、手机从公网握手并读到会话。踩过的坑与逐阶段部署脚本
+> （`probe / push / unit / nginx / verify`，主机全走环境变量）在
+> [docs/relay-deployment.md](docs/relay-deployment.md)。
 
 ## 开发
 

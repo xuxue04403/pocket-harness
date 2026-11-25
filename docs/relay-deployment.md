@@ -94,7 +94,7 @@ location /ph-relay {
 
 ```powershell
 $env:POCKET_HARNESS_VPS_HOST = "<你的主机>"
-$env:POCKET_HARNESS_VPS_PORT = "59188"
+$env:POCKET_HARNESS_VPS_PORT = "22"
 $env:POCKET_HARNESS_VPS_KEY  = "<私钥路径>"
 $env:POCKET_HARNESS_VPS_DOMAIN = "<你的域名>"
 python tools\deploy-relay.py --stage nginx
@@ -137,6 +137,68 @@ Host 要一张新票据（`pocketPairing/refresh`），存回本地。所以换�
 node probe\pairing-refresh-check.mjs   # 单元：票据里有中继、没有 secret、有效期足够长
 node probe\pairing-refresh-live.mjs    # 线上：真的经公网中继要一张新票
 ```
+
+## 换掉口令（轮换）
+
+中继口令一旦可能被第三方拿到——打包时误带进 tarball、贴进了聊天记录、提交进了仓库、
+或者只是用了太久——就要换。轮换有个前提值得先说清楚：
+
+**中继口令不是会话密钥。** 它是 Host 与中继之间的入场凭据，手机也要带它才能占上 client
+位。拿到口令的人能做的事止于「进到一个房间的门口」：房间号是 16 字节随机 hex，
+他不知道就没法进；就算猜到了，Noise 握手要求知道 Host 的静态公钥并完成配对 proof，
+他既冒充不了 Host，也解不出一帧。真正的数据保护在握手之后，不在这枚口令上。
+
+所以轮换的动机通常是「别再共享同一个秘密」，而不是「已经泄漏了对话」。按这个认知，
+轮换的代价也可以接受：**换一次要重新扫码一次**（票据里带着口令）。
+
+### 步骤
+
+1. 生成新口令：
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+   ```
+
+2. 在服务器上改 systemd 单元里的 `POCKET_HARNESS_RELAY_TOKEN`，然后：
+
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart pocket-harness-relay
+   curl -s http://127.0.0.1:8080/healthz        # ok rooms=0
+   ```
+
+3. 改电脑上 Host 插件的 `relayToken`（同一台 profile 的 `cordis.patch.yml`），
+   开关一次插件让它重载。Host 会用新口令重新进房，VPS 日志里出现新的
+   `host joined <room> (1 rooms)`。
+
+4. **手机要重新扫码**：旧票据里的口令已经被中继拒绝（`4403 bad token`），
+   旧票据刷新到的新票据带的也是新口令——但刷新本身要先连上，
+   所以这一步得手动做一次。之后又回到「扫一次、换网络不用再扫」。
+
+5. 确认旧口令不能再进：
+
+   ```powershell
+   $env:POCKET_HARNESS_RELAY_URL = "wss://<域名>/ph-relay"
+   $env:POCKET_HARNESS_RELAY_TOKEN = "<旧口令>"
+   node probe\relay-ws-check.mjs      # 应报 bad token / 4403
+   ```
+
+### 打包时最容易犯的错
+
+`npm pack` **不读仓库根的 `.gitignore`**，只看 `package.json` 的 `files` 和下层的 `.npmignore`。
+`relay/.relay-token` 被 `.gitignore` 挡住、进不了 git，但如果不额外挡住，
+它照样会被打进 `relay` 的 tarball 发出去。
+
+`relay/` 里这两道都设了：`package.json` 的 `files` 只列 `server.mjs` 与 `run.mjs`，
+`.npmignore` 用白名单收窄到同样几个文件加 `package.json`。打完包务必复核：
+
+```powershell
+tar -tzf dist\v0.1.1\pocket-harness-relay-0.1.1.tgz
+# 只应看到 package.json / server.mjs / run.mjs
+```
+
+真的漏出去了的话，按上面的轮换步骤换口令——**不要**只把文件从包里删掉就当解决了，
+已经发出去的 tarball 是收不回来的。
 
 ## 反向代理（Caddy）
 
