@@ -63,7 +63,13 @@ for (const line of text.split(/\r?\n/)) {
 
 console.log(`SHA256SUMS.txt 列出 ${expected.size} 个文件`);
 
+// GitHub 给每个附件算了一个 sha256 digest，服务端算的、跟着附件一起返回。
+// 本机到 github.com 的连接经常中途断掉（下载 URL 要经过它 302 到 objects），
+// 所以有 digest 就用 digest 比对；没有才把文件下回来自己算。
+const useDigest = (asset) => typeof asset.digest === 'string' && asset.digest.startsWith('sha256:');
+
 let bad = 0;
+let downloaded = 0;
 for (const [name, want] of expected) {
   const asset = release.assets.find((a) => a.name === name);
   if (!asset) {
@@ -71,15 +77,22 @@ for (const [name, want] of expected) {
     bad += 1;
     continue;
   }
-  const bytes = await get(asset.browser_download_url, false);
-  const got = crypto.createHash('sha256').update(bytes).digest('hex');
+  let got;
+  if (useDigest(asset)) {
+    got = asset.digest.slice('sha256:'.length);
+  } else {
+    got = crypto.createHash('sha256').update(await get(asset.browser_download_url, false)).digest('hex');
+    downloaded += 1;
+  }
   if (got === want) {
-    console.log(`  ok   ${name} ${bytes.length} bytes`);
+    console.log(`  ok   ${name} ${asset.size} bytes`);
   } else {
     console.error(`  BAD  ${name} 期望 ${want.slice(0, 12)}… 实际 ${got.slice(0, 12)}…`);
     bad += 1;
   }
 }
+
+console.log(`（${expected.size - downloaded} 个用服务端 digest，${downloaded} 个下载后自算）`);
 
 console.log(bad === 0 ? 'RELEASE ASSETS VERIFIED' : `${bad} 个附件对不上`);
 process.exit(bad === 0 ? 0 : 1);

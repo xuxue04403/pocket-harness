@@ -232,9 +232,14 @@ node tools/publish-release.mjs      --owner <账号> --tag v0.1.0-beta
 node tools/verify-release.mjs       --owner <账号> --tag v0.1.0-beta   # 把附件下回来重算
 ```
 
-`verify-release.mjs` 是真的从 release 下载每个附件再算 sha256，而不是相信上传返回值。
+`verify-release.mjs` 优先拿 GitHub 返回的 `asset.digest` 比对，只有服务端没给 digest 才真把附件下回来算 sha256——而不是相信上传返回值。本机到 `github.com` 下载时经常连不上，能少一趟就少一趟。
 
-`publish-git.mjs` 对分支和 tag 走两条路，这点值得单说：isomorphic-git 的 push 只处理 `refs/heads/*`，refspec 里写 `refs/tags/x:refs/tags/x` 会被**静默忽略**（返回体里连这个 ref 都不出现，而 `ok: true`），而 REST 的建 ref 又要求那个 tag 对象先存在于远端。所以脚本按 git 线上协议手工发一次 `receive-pack`，把注解 tag 本体作为单对象 packfile 推上去——远端得到的 sha 与本地逐字节相同，`git clone --branch v0.1.0-beta` 才对得上。
+`publish-git.mjs` 的分支与 tag 都走 git 线上协议的 `receive-pack`（传输层在 [tools/github-transport.mjs](tools/github-transport.mjs)），isomorphic-git 只用来遍历对象和打包：
+
+- 它的 `push` 只处理 `refs/heads/*`，refspec 里写 `refs/tags/x:refs/tags/x` 会被**静默忽略**（返回体里连这个 ref 都不出现，而 `ok: true`）；REST 的建 ref 又要求 tag 对象先存在于远端。所以注解 tag 本体作为单对象 packfile 推上去——远端得到的 sha 与本地逐字节相同，`git clone --branch v0.1.0-beta` 才对得上。
+- 它在「远端已经一致、无事可做」时会挂着等超时，所以脚本先查远端 sha 再决定要不要推。
+
+`github-transport.mjs` 之所以存在，是因为这台机器上 `github.com` / `api.github.com` 的默认 DNS 地址经常直接 reset 或超时，而同一个域名解析出的别的边缘地址是通的。它会把 DNS 结果和一份内置地址表合起来逐个 TLS 握手探活，只留下能连的再用；请求必须带显式 `Host:` 头，正文按 16 KiB 分片写（一次性 write 会被中途 reset）。
 
 tag 指到旧提交时，`--force` 会覆盖远端：先 `git tag -d v0.1.0-beta` 再 `git tag -a v0.1.0-beta -m "Pocket Harness v0.1.0-beta"`，别用 `git tag -f` 重打在同一提交上——那样 sha 会变而内容不变，白推一次。
 
