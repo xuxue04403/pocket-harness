@@ -30,7 +30,11 @@ const tag = arg('tag', 'v0.1.0-beta');
 const distDir = path.resolve(root, arg('dist', path.join('dist', tag)));
 const releaseName = arg('name', `Pocket Harness ${tag}`);
 const draft = has('draft');
-const prerelease = !has('no-prerelease');
+// `v0.1.0-beta` 是预发布，`v0.1.6` 不是。默认按 tag 判断，因为「记得加
+// --no-prerelease」这件事每次都忘：前几版全都挂成了 pre-release，GitHub 的
+// `/releases/latest` 于是指向一个旧版本，而手动访问页面的人看到的也是「预发布」标签。
+const looksPrerelease = /-(?:alpha|beta|rc|pre|dev)[.\d]*$/i.test(tag);
+const prerelease = has('prerelease') ? true : has('no-prerelease') ? false : looksPrerelease;
 
 if (!owner) {
   console.error('缺少 --owner');
@@ -120,6 +124,20 @@ if (!release) {
   }
   release = json;
   console.log(`release 已创建：${release.html_url}`);
+} else if (release.body !== notes || release.prerelease !== prerelease || release.draft !== draft) {
+  // 复用已有 release 时也要把说明与两个开关对齐，否则重发一版只会换掉附件，
+  // 页面上的说明还停在上一次：附件是新的、文字是旧的，看起来像发了一半。
+  const { res, json, text } = await api(`/releases/${release.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: releaseName, body: notes, draft, prerelease }),
+  });
+  if (!res.ok) {
+    console.error(`更新 release 失败：${res.status} ${text.slice(0, 300)}`);
+    process.exit(1);
+  }
+  release = json;
+  console.log(`release 已更新：说明与预发布标记（预发布 ${release.prerelease}）`);
 }
 
 // ---------- 2. 附件 ----------
