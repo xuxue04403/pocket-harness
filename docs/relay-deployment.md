@@ -109,6 +109,11 @@ python tools\deploy-relay.py --stage nginx
   块里有 `listen … 443` 才插。
 - **配置文件可能是非 UTF-8**：带中文注释的配置按文本读改写会毁掉编码。整份按 bytes 读写，
   只插入纯 ASCII 片段。
+- **中继必须会踢掉不答话的对端**：一台网络静默断开的电脑，其 socket 在 relay 眼里还是
+  open，房间槽位就一直被占着，之后每次重连都收到 `4409 a host is already in this room`，
+  手机再也连不上。`relay/server.mjs` 每 `HEARTBEAT_MS = 30_000` ping 一次，没回 pong 的
+  直接 `terminate()`。如果你改了这个文件，记得重新 `--stage push` 并重启服务，否则老进程
+  里没有心跳。
 
 验证分两步，都不需要手机：
 
@@ -123,6 +128,15 @@ node probe\relay-e2e.mjs
 
 第二条成功时会打印 `THE PHONE CAN REACH THIS HOST THROUGH THE PUBLIC RELAY` 与真实会话数。
 它用的是运行中 Host 自己的配对码（含 `relay`/`room`/`rtok`），所以验的是手机真正会走的那条路。
+
+手机上那条「扫一次、之后换网络也能连」的路，除了中继还要靠票据刷新：手机每连上一次就向
+Host 要一张新票据（`pocketPairing/refresh`），存回本地。所以换到外网时它手里已经有中继
+地址，而不是只有当初扫码那个 Wi-Fi 的局域网地址。这条也算在验证范围内：
+
+```powershell
+node probe\pairing-refresh-check.mjs   # 单元：票据里有中继、没有 secret、有效期足够长
+node probe\pairing-refresh-live.mjs    # 线上：真的经公网中继要一张新票
+```
 
 ## 反向代理（Caddy）
 
