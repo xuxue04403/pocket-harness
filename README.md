@@ -220,13 +220,16 @@ CI 在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：四份独立作�
 
 ### 发版
 
-发布脚本只用 Node 的 HTTPS（理由见 [tools/publish-git.mjs](tools/publish-git.mjs) 顶部：本机 git 走 schannel，沙箱里拿不到客户端凭证）。先把要发的 APK 等产物放进 `dist/<tag>/`，连同 `RELEASE_NOTES.md` 和 `SHA256SUMS.txt`，然后：
+发布脚本只用 Node 的 HTTPS（理由见 [tools/publish-git.mjs](tools/publish-git.mjs) 顶部：本机 git 走 schannel，沙箱里拿不到客户端凭证）。先把要发的 APK 等产物放进 `dist/<tag>/`，连同 `RELEASE_NOTES.md` 一起，再让脚本算校验和：
 
 ```powershell
 $env:POCKET_HARNESS_TOKEN_FILE = "probe/_gh_token.txt"   # 细粒度 PAT，需 Contents 读写
+node tools/hash-release-dir.mjs dist/<tag>               # 写出 SHA256SUMS.txt
 node tools/publish-git.mjs     --owner <账号> --branch master --tag <tag>
 node tools/publish-release.mjs --owner <账号> --tag <tag>
 ```
+
+`SHA256SUMS.txt` 由脚本算，不要手抄：手抄最容易漏改一行，而 `verify-release.mjs` 拿它跟服务端 digest 比对，漏改的那一行会让「校验通过」变成空话。
 
 两个脚本都是幂等的：远端已经一致就跳过，release 已存在就只补缺失的附件。
 

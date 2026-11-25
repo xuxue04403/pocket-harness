@@ -76,12 +76,14 @@ export function createTransport({ token, owner, repo, log = () => {} }) {
         req.end();
         return;
       }
+      // 调用方常常直接给 JSON 字符串；统一成 Buffer 才能切片写入。
+      const payload = Buffer.isBuffer(body) ? body : Buffer.from(body);
       // 大 body 分片写：一次性 write 会让某些出口中途 reset。
       const slice = 16384;
       let offset = 0;
       const pump = () => {
-        while (offset < body.length) {
-          const next = body.subarray(offset, offset + slice);
+        while (offset < payload.length) {
+          const next = payload.subarray(offset, offset + slice);
           offset += slice;
           if (!req.write(next)) {
             req.once('drain', pump);
