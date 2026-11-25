@@ -147,3 +147,9 @@ probe/_parent_check.mjs
 probe/_tmp/
 probe/_nginx_current.txt
 probe/_*.dart
+probe/_*.pack
+probe/_*.txt
+probe/_commits*
+probe/_obj*
+probe/_revs*
+probe/_to_send*
