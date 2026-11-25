@@ -167,6 +167,9 @@ export function createTransport({ token, owner, repo, log = () => {} }) {
   }
 
   // 推一条 ref。pack 是要送的对象（调用方负责准备），old/new 是远端与本地 sha。
+  //
+  // 地址列表要扫两轮：这条出口会在几十秒里整片失灵又整片恢复，一轮扫完就放弃
+  // 意味着一次短暂的抖动就让整次发版失败。第二轮前停一下，让出口回过气来。
   async function receivePack(refName, oldSha, newSha, pack) {
     const body = Buffer.concat([
       pkt(`${oldSha} ${newSha} ${refName}\u0000report-status side-band-64k agent=pocket-harness/0.1.0`),
@@ -174,31 +177,38 @@ export function createTransport({ token, owner, repo, log = () => {} }) {
       pack,
     ]);
     let lastError = null;
-    for (const address of await addresses('github.com')) {
-      try {
-        const res = await call({
-          address,
-          servername: 'github.com',
-          method: 'POST',
-          path: `/${owner}/${repo}.git/git-receive-pack`,
-          headers: {
-            Host: 'github.com',
-            ...auth.basic,
-            'Content-Type': 'application/x-git-receive-pack-request',
-            Accept: 'application/x-git-receive-pack-result',
-            'User-Agent': 'git/2.0',
-            'Content-Length': String(body.length),
-          },
-          body,
-          timeoutMs: 240000,
-        });
-        const said = readReport(res.body).replace(/\u0000/g, '').replace(/\r/g, '\n').trim();
-        if (res.status >= 200 && res.status < 300 && !/unpack (?!ok)/.test(said) && !/^ng /m.test(said)) {
-          return { ok: true, said };
+    for (let round = 0; round < 3; round += 1) {
+      if (round > 0) {
+        log(`  第 ${round + 1} 轮，先等 ${round * 5} 秒…`);
+        await new Promise((resolve) => setTimeout(resolve, round * 5000));
+      }
+      for (const address of await addresses('github.com')) {
+        try {
+          const res = await call({
+            address,
+            servername: 'github.com',
+            method: 'POST',
+            path: `/${owner}/${repo}.git/git-receive-pack`,
+            headers: {
+              Host: 'github.com',
+              ...auth.basic,
+              'Content-Type': 'application/x-git-receive-pack-request',
+              Accept: 'application/x-git-receive-pack-result',
+              'User-Agent': 'git/2.0',
+              'Content-Length': String(body.length),
+            },
+            body,
+            timeoutMs: 240000,
+          });
+          const said = readReport(res.body).replace(/\u0000/g, '').replace(/\r/g, '\n').trim();
+          if (res.status >= 200 && res.status < 300 && !/unpack (?!ok)/.test(said) && !/^ng /m.test(said)) {
+            return { ok: true, said };
+          }
+          lastError = new Error(`被拒（HTTP ${res.status}）：${said.split('\n').filter(Boolean).slice(-3).join(' / ') || '(服务端没说话)'}`);
+        } catch (error) {
+          lastError = error;
+          log(`  ${address} 失败：${error.message}`);
         }
-        lastError = new Error(`被拒（HTTP ${res.status}）：${said.split('\n').filter(Boolean).slice(-3).join(' / ') || '(服务端没说话)'}`);
-      } catch (error) {
-        lastError = error;
       }
     }
     return { ok: false, error: lastError };
