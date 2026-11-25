@@ -41,14 +41,18 @@ function coded(code, message) {
  *
  * `issue(port)` is supplied by the Host so this module never has to know how a
  * listener is found, and so the port in the ticket is the one actually bound.
+ * It is awaited because the Host has to read its credentials record and, when a
+ * relay is advertised, its room — both asynchronous. Treating the promise as a
+ * ticket is how this first shipped, and the symptom was a Buffer error from deep
+ * inside the encoder rather than anything that named the real mistake.
  */
-export function servePairing(request, { issue } = {}) {
+export async function servePairing(request, { issue } = {}) {
   switch (request?.method) {
     case 'refresh': {
       if (typeof issue !== 'function') {
         throw coded('UNAVAILABLE', `${PAIRING_NAMESPACE}/refresh needs a running link server`)
       }
-      const ticket = issue()
+      const ticket = await issue()
       return {
         v: PAIRING_TICKET_VERSION,
         ticket: encodeTicket(ticket),

@@ -16,6 +16,15 @@ const MAX_BUFFERED_BYTES = 8 * 1024 * 1024
 const ROOM_IDLE_MS = 60_000
 /** Largest single frame a peer may send. */
 const MAX_FRAME_BYTES = 4 * 1024 * 1024 + 64
+/**
+ * How often a peer is pinged, and how long a silent one may keep its room slot.
+ *
+ * Without this a Host whose network dropped without a FIN stays in the room
+ * forever: the socket looks open to the relay, so the next dial is refused with
+ * "a host is already in this room" and no phone can ever pair again. The Host's
+ * own rejoin loop then retries every thirty seconds against its own ghost.
+ */
+const HEARTBEAT_MS = 30_000
 
 /**
  * One relayed conversation between a Host and a phone.
@@ -99,6 +108,12 @@ export function createRelay({ token, path = '/relay', log = () => {} } = {}) {
     void request
     /** @type {{room: Room, role: 'host'|'client'}|null} */
     let joined = null
+    // A half-open socket is indistinguishable from a busy one until we ask, so
+    // every peer has to prove it is still there. See HEARTBEAT_MS.
+    socket.isAlive = true
+    socket.on('pong', () => {
+      socket.isAlive = true
+    })
     const joinTimeout = setTimeout(() => {
       if (joined === null) socket.close(4408, 'no hello')
     }, 10_000)
@@ -188,6 +203,25 @@ export function createRelay({ token, path = '/relay', log = () => {} } = {}) {
   }, 30_000)
   sweeper.unref?.()
 
+  // Terminate peers that stopped answering, so their room slot is released and
+  // a Host that lost its network can take it back on its next dial.
+  const keeper = setInterval(() => {
+    for (const socket of wss.clients) {
+      if (socket.isAlive === false) {
+        log('dropped a peer that stopped answering')
+        socket.terminate()
+        continue
+      }
+      socket.isAlive = false
+      try {
+        socket.ping()
+      } catch {
+        socket.terminate()
+      }
+    }
+  }, HEARTBEAT_MS)
+  keeper.unref?.()
+
   return {
     server,
     rooms,
@@ -204,6 +238,7 @@ export function createRelay({ token, path = '/relay', log = () => {} } = {}) {
     },
     async close() {
       clearInterval(sweeper)
+      clearInterval(keeper)
       for (const socket of wss.clients) socket.terminate()
       await new Promise(resolve => wss.close(() => resolve()))
       await new Promise(resolve => server.close(() => resolve()))
