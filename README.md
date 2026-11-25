@@ -2,9 +2,9 @@
 
 用手机操控跑在电脑上的 DeepSeek Harness，链路端到端加密。
 
-**当前版本：v0.1.1**（范围只有「远程操控电脑」，更新记录见 [CHANGELOG.md](CHANGELOG.md)）
+**当前版本：v0.1.5**（范围只有「远程操控电脑」，更新记录见 [CHANGELOG.md](CHANGELOG.md)）
 
-安装包：[release 页](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.1) ·
+安装包：[release 页](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.5) ·
 源码：`git clone https://github.com/xuxue04403/pocket-harness.git`
 
 工作区、智能体运行时与会话历史全部留在电脑上，手机只是一扇窗：扫一次码完成配对，之后就能在外面列会话、读记录、发提示词——同一个局域网里直连，跨网络时走你自己部署的中继。
@@ -39,6 +39,7 @@
 | 查看与修改电脑的全局默认模型 | ✅ 带 revision 校验，电脑上改了会拒绝覆盖 |
 | 发送提示词、抢断、停止 | ✅ |
 | 运行中逐字流式显示 | ✅ 思考与正文分栏 |
+| 回复按 markdown 渲染 | ✅ 标题、列表、引用、表格、代码卡片（语言标签、行号、复制按钮）；代码高亮是自带的小词法分析器，不引第三方语法包；流式期间也是同一套渲染，带闪烁光标 |
 | 工具调用与结果卡片 | ✅ |
 | 工具审批与提问（在手机上回答） | ✅ 拒答即 fail-closed，也可转回电脑 |
 | 发送与查看图片 | ✅ 从相册选图随消息发出，历史里的图片按需取回 |
@@ -75,14 +76,14 @@ cd pocket-harness
 ```
 
 默认分支是 `master`。预编译包在
-[v0.1.1 release](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.1) 页。
+[v0.1.5 release](https://github.com/xuxue04403/pocket-harness/releases/tag/v0.1.5) 页。
 
-没网或者只想要离线副本时，release 附件里还有一个 `pocket-harness-0.1.1.bundle`，
-里面是完整历史与 `v0.1.1` 标签，可以不联网直接克隆出来构建：
+没网或者只想要离线副本时，release 附件里还有一个 `pocket-harness-0.1.5.bundle`，
+里面是完整历史与 `v0.1.5` 标签，可以不联网直接克隆出来构建：
 
 ```bash
-git clone pocket-harness-0.1.1.bundle pocket-harness
-git bundle verify pocket-harness-0.1.1.bundle   # 校验完整历史
+git clone pocket-harness-0.1.5.bundle pocket-harness
+git bundle verify pocket-harness-0.1.5.bundle   # 校验完整历史
 ```
 
 ### 1. 在电脑上装 Host 插件
@@ -92,8 +93,8 @@ git bundle verify pocket-harness-0.1.1.bundle   # 校验完整历史
 **a. 从 release 里的插件包装（不用 git，最省事）**
 
 [release 页](https://github.com/xuxue04403/pocket-harness/releases) 上有一个
-`dsh-pocketharness-host-0.1.1.tgz`。下载到本地，在 Harness 的插件管理器里点安装，
-安装目标填这个**压缩包的绝对路径**（形如 `D:\下载\dsh-pocketharness-host-0.1.1.tgz`）。
+`dsh-pocketharness-host-0.1.5.tgz`。下载到本地，在 Harness 的插件管理器里点安装，
+安装目标填这个**压缩包的绝对路径**（形如 `D:\下载\dsh-pocketharness-host-0.1.5.tgz`）。
 插件管理器按扩展名识别：`.tgz` / `.tar.gz` 结尾的绝对路径当作压缩包解开装，
 绝对目录则当作目录直链（也就是下面的 b）。
 
@@ -101,7 +102,7 @@ git bundle verify pocket-harness-0.1.1.bundle   # 校验完整历史
 
 ```powershell
 $expected = (Select-String -Path SHA256SUMS.txt -Pattern 'dsh-pocketharness-host').Line.Split(' ')[0]
-$actual   = (Get-FileHash -Algorithm SHA256 .\dsh-pocketharness-host-0.1.1.tgz).Hash.ToLower()
+$actual   = (Get-FileHash -Algorithm SHA256 .\dsh-pocketharness-host-0.1.5.tgz).Hash.ToLower()
 $actual -eq $expected      # 应输出 True
 ```
 
@@ -113,7 +114,7 @@ $actual -eq $expected      # 应输出 True
 **c. 用 `dsh plugin` 命令行装（只用 CLI 的 profile）**
 
 ```bash
-dsh plugin install /绝对路径/dsh-pocketharness-host-0.1.1.tgz
+dsh plugin install /绝对路径/dsh-pocketharness-host-0.1.5.tgz
 ```
 
 > **`desktop` profile 只能用 a 或 b**。它由 Electron 独占，`dsh plugin` CLI 操作不了它，
@@ -146,7 +147,7 @@ flutter pub get
 flutter build apk --release --split-per-abi
 ```
 
-三份按 CPU 架构拆开的包（v0.1.1 实测）：`app-arm64-v8a-release.apk`（12.9 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（12.1 MB，老设备）、`app-x86_64-release.apk`（13.4 MB，模拟器）。不拆包的单包约 17 MB。
+三份按 CPU 架构拆开的包（v0.1.5 实测）：`app-arm64-v8a-release.apk`（12.9 MB，主流手机装这个）、`app-armeabi-v7a-release.apk`（12.1 MB，老设备）、`app-x86_64-release.apk`（13.4 MB，模拟器）。不拆包的单包约 17 MB。
 
 > 只有「在手机上本机跑 dsh」那条路需要 proot 的二进制（`app/android/app/src/main/jniLibs/<abi>/lib*.so`），
 > 它体积不小、且带 GPL 条款，所以不入库；要用先跑一次 `tools/proot-fetch.ps1` 现取。
@@ -157,7 +158,7 @@ flutter build apk --release --split-per-abi
 > 没有 `key.properties` 时回落到 debug 签名，只为让 `flutter run --release` 能跑，不能分发。
 > 实测过的两条分支：无 key.properties → 构建成功（66.1 MB 单包）；有 key.properties + 自建
 > keystore → `apksigner verify --print-certs` 显示的是 keystore 里的 DN，证明真走了 release 签名。
-> 当前 v0.1.1 的 APK 用项目自建 keystore 签（`CN=Pocket Harness`，指纹见 [CHANGELOG.md](CHANGELOG.md)），
+> 当前 v0.1.5 的 APK 用项目自建 keystore 签（`CN=Pocket Harness`，指纹见 [CHANGELOG.md](CHANGELOG.md)），
 > 同一 key 的后续版本可覆盖安装。要发布到应用商店请换成自己的 keystore。
 
 ### 3. 配对
@@ -186,7 +187,7 @@ node run.mjs          # 监听 0.0.0.0:8080，GET /healthz 可探活
 | `HOST` | `0.0.0.0` | 放在反向代理后面时改成 `127.0.0.1` |
 
 启动后打印 `relay listening on <host>:<port>`；`GET /healthz` 返回 `ok rooms=N`。
-也可以直接用 release 里的包：`npm install ./pocket-harness-relay-0.1.1.tgz`。
+也可以直接用 release 里的包：`npm install ./pocket-harness-relay-0.1.5.tgz`。
 
 #### 部署到自己的 VPS
 
@@ -217,7 +218,7 @@ node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 ```bash
 sudo mkdir -p /opt/pocket-harness-relay
 cd /opt/pocket-harness-relay
-sudo npm install ./pocket-harness-relay-0.1.1.tgz    # 或把仓库的 relay/ 整个拷上来再 npm install
+sudo npm install ./pocket-harness-relay-0.1.5.tgz    # 或把仓库的 relay/ 整个拷上来再 npm install
 ```
 
 ```ini
@@ -321,7 +322,7 @@ cd packages\dsh_link; dart analyze; dart test
 cd relay; npm install; cd ..      # 中继的测试会 import relay/server.mjs，它依赖 ws
 node --test host
 
-# Flutter 客户端：146 个测试
+# Flutter 客户端：161 个测试
 cd app; flutter analyze; flutter test
 ```
 
@@ -370,7 +371,15 @@ node probe/qr-external-check.mjs  # 与外部编码器逐格比对，并让 jsQR
 node probe/qr-scan-check.mjs      # 模块在屏幕上有多少像素才算扫得动
 node probe/pair-page-check.mjs    # 设置卡片真正会拿到的票据
 dart run --packages=app/.dart_tool/package_config.json probe/session-groups-check.dart
+dart run --packages=app/.dart_tool/package_config.json probe/markdown-check.dart
+dart run --packages=app/.dart_tool/package_config.json probe/highlight-check.dart
 ```
+
+回复渲染那套（`markdown.dart` 解析、`code_highlight.dart` 着色、`widgets/markdown_body.dart` 上屏）
+分三层，前两层是纯 Dart，所以解析与着色的 bug 不用 pump 一帧就能测；第三层用 widget 测试
+断言「着色确实进了 `TextSpan`、流式确实有光标、完成的消息才可选」，因为截图看不出配色对不对。
+两条不变量钉住了最容易出错的边界：未闭合的围栏必须仍算代码块（流式时每帧都是这个形态），
+着色的片段拼回去必须与原文逐字节相同。
 
 鸿蒙侧目前能跑通的界面（扫码配对、会话列表、对话页、审批、模型、技能、设置、文件、任务、计划、
 图片、后台任务）都在探针工程里，用 `tools/ohos-probe/build.ps1` 一键编译出**已签名**的 HAP，
