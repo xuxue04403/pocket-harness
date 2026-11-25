@@ -205,11 +205,13 @@ if (!tagSha) {
 
 // tag 对象的本体在 .git/objects 里是 zlib 压缩的 loose object，直接解出来用，
 // 不经过 `git cat-file`，保证发出去的字节与本地对象哈希一致。
+//
+// 但 git 的自动 gc 会把 loose object 压进 packfile（实测打过几次 tag 之后就会发生），
+// 这时文件根本不存在。不能因此报错退出：回落到 isomorphic-git 的 readObject 取
+// `format: 'content'`，它给的同样是解压后的原始字节，算出来的 sha 与本地一致。
 function readLooseObject(sha) {
   const p = path.join(gitDirPath, 'objects', sha.slice(0, 2), sha.slice(2));
-  if (!fs.existsSync(p)) {
-    throw new Error(`找不到 loose object ${sha}（如果被 gc 打包进 packfile，请先 git unpack-objects 或改用 git push）`);
-  }
+  if (!fs.existsSync(p)) return null;
   const raw = zlib.inflateSync(fs.readFileSync(p));
   const nul = raw.indexOf(0);
   const header = raw.subarray(0, nul).toString('utf8'); // "<type> <size>"
@@ -221,7 +223,14 @@ function readLooseObject(sha) {
   return { type, body };
 }
 
-const tagObj = readLooseObject(tagSha);
+async function readObjectBody(sha) {
+  const loose = readLooseObject(sha);
+  if (loose) return loose;
+  const { type, object } = await git.readObject({ fs, dir: root, oid: sha, format: 'content' });
+  return { type, body: Buffer.from(object) };
+}
+
+const tagObj = await readObjectBody(tagSha);
 if (tagObj.type !== 'tag') {
   console.error(`refs/tags/${tag} 指向的是 ${tagObj.type}，不是 annotated tag。`);
   process.exit(2);
