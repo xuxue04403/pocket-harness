@@ -87,9 +87,47 @@ git bundle verify pocket-harness-0.1.1.bundle   # 校验完整历史
 
 ### 1. 在电脑上装 Host 插件
 
-需要 DeepSeek Harness 0.2.2 或更新的版本。
+需要 DeepSeek Harness 0.2.2 或更新的版本。三种装法，按顺手的来：
 
-在 Harness 的插件管理器里选择「安装本地目录」，指向本仓库的 `host/`。装好后 Harness 日志里会出现：
+**a. 从 release 里的插件包装（不用 git，最省事）**
+
+[release 页](https://github.com/xuxue04403/pocket-harness/releases) 上有一个
+`dsh-pocketharness-host-0.1.1.tgz`。下载到本地，在 Harness 的插件管理器里点安装，
+安装目标填这个**压缩包的绝对路径**（形如 `D:\下载\dsh-pocketharness-host-0.1.1.tgz`）。
+插件管理器按扩展名识别：`.tgz` / `.tar.gz` 结尾的绝对路径当作压缩包解开装，
+绝对目录则当作目录直链（也就是下面的 b）。
+
+装之前先核对它没被改过：
+
+```powershell
+$expected = (Select-String -Path SHA256SUMS.txt -Pattern 'dsh-pocketharness-host').Line.Split(' ')[0]
+$actual   = (Get-FileHash -Algorithm SHA256 .\dsh-pocketharness-host-0.1.1.tgz).Hash.ToLower()
+$actual -eq $expected      # 应输出 True
+```
+
+**b. 从仓库目录装（开发时用，改完代码重载一次就生效）**
+
+在插件管理器里选「安装本地目录」，指向本仓库的 `host/`。这样是目录直链，
+改了 `host/*.js` 后不用重新打包。
+
+**c. 用 `dsh plugin` 命令行装（只用 CLI 的 profile）**
+
+```bash
+dsh plugin install /绝对路径/dsh-pocketharness-host-0.1.1.tgz
+```
+
+> **`desktop` profile 只能用 a 或 b**。它由 Electron 独占，`dsh plugin` CLI 操作不了它，
+> 「安装本地目录」也只能由插件管理器自己做。a 是唯一不用 git、也不用手改配置的路子。
+
+**为什么离线包必须自足**：Harness 用 Junction（Windows 目录链接）把插件挂进
+`~/.dsh/profiles/<profile>/node_modules/`，然后直接 `import`，**这一层没有自己的 `node_modules`**。
+所以插件里不能 `import` 任何第三方包——`host/` 是零依赖的 ESM（连二维码编码器都是自己写的，
+见 `host/qr_encode.js`）。压缩包里没有 `dependencies`，装完只占 165 KB。
+
+需要更细的步骤（profile 配置、接中继、改端口、查日志、升级与卸载）见
+[docs/host-deploy.md](docs/host-deploy.md)。
+
+装好后 Harness 日志里会出现：
 
 ```
 pocket-harness: link server listening on port 48100
