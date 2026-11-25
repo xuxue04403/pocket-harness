@@ -154,10 +154,14 @@ class _HostsPageState extends State<HostsPage> {
 
   String _subtitle(PairingTicket ticket, bool expired) {
     final addresses = ticket.lanEndpoints.take(2).join(', ');
+    // A relay in the saved ticket is what lets the phone reach this computer from
+    // outside its Wi-Fi, so it is worth saying plainly rather than leaving people
+    // to guess why one entry works on mobile data and another does not.
+    final reach = ticket.hasRelay ? '可经中继' : '仅局域网';
     if (expired) {
-      return '之前已配对 · $addresses\n配对码已过期，但这台手机仍然受信任。';
+      return '之前已配对 · $reach\n配对码已过期，但这台手机仍然受信任。';
     }
-    return addresses.isEmpty ? '配对码里没有局域网地址' : addresses;
+    return addresses.isEmpty ? '配对码里没有局域网地址 · $reach' : '$addresses · $reach';
   }
 }
 

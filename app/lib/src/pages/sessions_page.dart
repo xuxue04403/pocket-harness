@@ -28,6 +28,15 @@ class _SessionsPageState extends State<SessionsPage> {
   HostLink? _link;
   String? _error;
 
+  /// The ticket this page is dialling with.
+  ///
+  /// Seeded from the one that was scanned, then replaced by whatever the Host
+  /// says is current once a link is up: the scanned copy can name a LAN address
+  /// that DHCP has since handed to someone else, or predate a relay being set up
+  /// at all. Keeping the refreshed one here means a retry in this page does not
+  /// walk back into the stale address.
+  PairingTicket? _ticket;
+
   /// The directory the newest session lives in, offered as the default for the
   /// next one. People work in the same project for a stretch, so retyping the
   /// path each time is the common annoyance this removes.
@@ -65,7 +74,7 @@ class _SessionsPageState extends State<SessionsPage> {
     if (previous != null) unawaitedClose(previous);
     try {
       final identity = await widget.store.identity();
-      final link = await HostLink.connect(widget.ticket, identity);
+      final link = await HostLink.connect(_ticket ?? widget.ticket, identity);
       if (!mounted) {
         await link.close();
         return const [];
@@ -77,6 +86,7 @@ class _SessionsPageState extends State<SessionsPage> {
       setState(() {
         _link = link;
       });
+      await _adoptRefreshedTicket(link);
       final sessions = await link.sessions();
       _seedCollapsed(sessions);
       // Kept for the search page, which labels a hit with the title a person
@@ -92,6 +102,25 @@ class _SessionsPageState extends State<SessionsPage> {
     } on Object catch (error) {
       if (mounted) setState(() => _error = _describe(error));
       rethrow;
+    }
+  }
+
+  /// Replaces the stored ticket with the Host's current one.
+  ///
+  /// This is what makes "scan once, then work from anywhere" true: the saved
+  /// ticket names the addresses that were true at scan time, and the Host is the
+  /// only party that knows the live ones. The refresh is best effort — an older
+  /// Host answers with an error and the phone simply keeps what it has.
+  Future<void> _adoptRefreshedTicket(HostLink link) async {
+    final fresh = await link.refreshTicket();
+    if (fresh == null) return;
+    _ticket = fresh;
+    // The store keys entries by Host id, so this replaces the scanned copy in
+    // place rather than adding a second row for the same computer.
+    try {
+      await widget.store.saveHost(fresh);
+    } on Object {
+      // A phone that cannot write preferences still works for this run.
     }
   }
 

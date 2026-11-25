@@ -1077,9 +1077,39 @@ class HostLink {
     PairingTicket ticket,
     DeviceIdentity identity, {
     Duration timeout = const Duration(seconds: 10),
+    Duration relayTimeout = const Duration(seconds: 20),
   }) async {
-    final client = await LinkClient.connect(ticket, identity, timeout: timeout);
+    // The relay budget is longer on purpose: a LAN socket either answers in
+    // milliseconds or is not there, while a relay waits for the Host to be
+    // woken and dial in. Sharing one timeout would give up on mobile data.
+    final client = await LinkClient.connect(
+      ticket,
+      identity,
+      timeout: timeout,
+      relayTimeout: relayTimeout,
+    );
     return HostLink._(client, ticket);
+  }
+
+  /// Asks the Host where it can currently be reached.
+  ///
+  /// A saved ticket is a snapshot: the LAN address it carries is whatever DHCP
+  /// handed out the day the phone scanned, and it may predate a relay being
+  /// configured at all. The Host knows the live answer, and an already-paired
+  /// phone can ask for it over the link it just established — including over the
+  /// relay, which is exactly the case where the stale ticket hurt.
+  ///
+  /// Returns null when the Host does not answer the call (an older plugin, or a
+  /// Host that refuses), so callers can keep using the ticket they have.
+  Future<PairingTicket?> refreshTicket() async {
+    try {
+      final value = await _client.rpc.call('pocketPairing/refresh', const {});
+      final encoded = value['ticket'];
+      if (encoded is! String || encoded.isEmpty) return null;
+      return PairingTicket.decode(encoded);
+    } on Object {
+      return null;
+    }
   }
 
   /// Sessions ordered by activity, as the desktop sidebar shows them.

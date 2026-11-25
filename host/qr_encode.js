@@ -1,17 +1,21 @@
 // Turning text into a QR matrix, so the plugin can draw a pairing code instead
 // of asking anyone to go and read a log file.
 //
-// Only the byte mode is implemented, and only with error correction level M.
-// A pairing code is ASCII/JSON about 300 bytes long; of the forty versions,
-// eight of them at level M hold that much, and the mirror in
-// packages/dsh_arkts can decode all of them, so the missing modes cost nothing
-// here while the missing versions would.
+// Only the byte mode is implemented, but all four error correction levels are:
+// the pairing ticket is JSON whose length depends on how much the Host has to
+// advertise, and a level that costs a whole extra version is the difference
+// between a code a phone camera can read and one it cannot. Level L is what the
+// pairing page asks for, because a screen-to-camera scan has no torn paper to
+// recover from and module size is the thing that actually decides readability.
 //
 // This file is deliberately self-contained: no `@deepseek-ai/*` imports, no
 // third-party ones. The Host plugin is loaded from a directory junction into
 // the DSH profile, where nothing else is on the module path.
 
-const EC_LEVEL = 'M'
+/** Levels, weakest first. Level M is the default, as the spec suggests. */
+export const EC_LEVELS = ['L', 'M', 'Q', 'H']
+
+const DEFAULT_EC_LEVEL = 'M'
 
 /** Total codewords (data + error correction) for a version. */
 const TOTAL_CODEWORDS = [
@@ -200,23 +204,30 @@ function sideLength(version) {
   return 17 + version * 4
 }
 
-/** This file only ever encodes level M, so the slot is a plain lookup. */
-function slotFor(version) {
+/**
+ * Where a version sits in the flat tables.
+ *
+ * Each level in `EC_PER_BLOCK` and `EC_BLOCKS` is its own array of forty
+ * entries, one per version, so the slot is just the version offset — the level
+ * picks the array, not an offset inside it.
+ */
+function slotFor(version, level) {
+  if (!EC_LEVELS.includes(level)) throw new Error(`unknown error correction level: ${level}`)
   return version - 1
 }
 
-function dataCodewords(version) {
-  const slot = slotFor(version)
-  const blocks = EC_BLOCKS[EC_LEVEL][slot]
-  return TOTAL_CODEWORDS[slot] - EC_PER_BLOCK[EC_LEVEL][slot] * blocks
+function dataCodewords(version, level) {
+  const slot = slotFor(version, level)
+  const blocks = EC_BLOCKS[level][slot]
+  return TOTAL_CODEWORDS[version - 1] - EC_PER_BLOCK[level][slot] * blocks
 }
 
 /** The block split for a version: short data length, long blocks, ec per block. */
-function blockLayout(version) {
-  const slot = slotFor(version)
-  const blocks = EC_BLOCKS[EC_LEVEL][slot]
-  const ecPerBlock = EC_PER_BLOCK[EC_LEVEL][slot]
-  const dataBytes = TOTAL_CODEWORDS[slot] - ecPerBlock * blocks
+function blockLayout(version, level) {
+  const slot = slotFor(version, level)
+  const blocks = EC_BLOCKS[level][slot]
+  const ecPerBlock = EC_PER_BLOCK[level][slot]
+  const dataBytes = TOTAL_CODEWORDS[version - 1] - ecPerBlock * blocks
   const shortLength = Math.floor(dataBytes / blocks)
   return {
     blocks,
@@ -233,14 +244,14 @@ function lengthBits(version) {
   return 16
 }
 
-/** The smallest version at level M that holds `byteLength` bytes. */
-function versionFor(byteLength) {
+/** The smallest version at [level] that holds `byteLength` bytes. */
+function versionFor(byteLength, level) {
   for (let version = 1; version <= 40; version += 1) {
     // 4 bits of mode, then the length field, then the bytes themselves.
     const needed = 4 + lengthBits(version) + byteLength * 8
-    if (needed <= dataCodewords(version) * 8) return version
+    if (needed <= dataCodewords(version, level) * 8) return version
   }
-  throw new Error(`a ${byteLength}-byte payload does not fit in any QR version at level M`)
+  throw new Error(`a ${byteLength}-byte payload does not fit in any QR version at level ${level}`)
 }
 
 /** Centre coordinates of the alignment patterns for a version, ascending. */
@@ -257,9 +268,9 @@ function alignmentCentres(version) {
 
 const FORMAT_MASK = 0x5412
 
-/** The fifteen stored format bits for level M and a mask, already XORed. */
-function formatBits(mask) {
-  const data = (EC_LEVEL_BITS[EC_LEVEL] << 3) | mask
+/** The fifteen stored format bits for a level and a mask, already XORed. */
+function formatBits(level, mask) {
+  const data = (EC_LEVEL_BITS[level] << 3) | mask
   let remainder = data << 10
   for (let bit = 14; bit >= 10; bit -= 1) {
     if ((remainder & (1 << bit)) !== 0) remainder ^= 0x537 << (bit - 10)
@@ -304,8 +315,8 @@ function maskBit(mask, row, col) {
 // Codewords.
 
 /** The 4-bit mode indicator, the length, the bytes, then the padding. */
-function dataCodewordBytes(bytes, version) {
-  const capacity = dataCodewords(version)
+function dataCodewordBytes(bytes, version, level) {
+  const capacity = dataCodewords(version, level)
   const bits = []
   const push = (value, width) => {
     for (let bit = width - 1; bit >= 0; bit -= 1) bits.push((value >> bit) & 1)
@@ -337,8 +348,8 @@ function dataCodewordBytes(bytes, version) {
 }
 
 /** Split the data into blocks, add parity to each, then interleave. */
-function interleave(dataBytes, version) {
-  const layout = blockLayout(version)
+function interleave(dataBytes, version, level) {
+  const layout = blockLayout(version, level)
   const shortCount = layout.blocks - layout.longBlocks
   const blocks = []
   let cursor = 0
@@ -468,9 +479,9 @@ function drawAlignment(cells, version) {
   }
 }
 
-function drawFormat(cells, mask) {
+function drawFormat(cells, mask, level) {
   const size = cells.length
-  const bits = formatBits(mask)
+  const bits = formatBits(level, mask)
   const bit = index => ((bits >> index) & 1) === 1
 
   // First copy: down column eight beside the top-left finder, then the seven
@@ -606,12 +617,18 @@ function penaltyScore(cells) {
  * Returns rows of booleans, dark = true — the same shape
  * `packages/dsh_arkts/src/qr/decode.ts` reads, so the two can be checked
  * against each other instead of each other's bugs.
+ *
+ * `level` trades error tolerance for module count. Level L is right for a code
+ * that is only ever read off a clean screen by a camera a few centimetres away:
+ * the spec's default of M costs a version or two at pairing-ticket lengths,
+ * which is exactly the difference that makes a code unscannable at card size.
  */
-export function encodeMatrix(text, { mask: forcedMask } = {}) {
+export function encodeMatrix(text, { mask: forcedMask, level = DEFAULT_EC_LEVEL } = {}) {
+  if (!EC_LEVELS.includes(level)) throw new Error(`unknown error correction level: ${level}`)
   const bytes = Buffer.from(String(text), 'utf8')
-  const version = versionFor(bytes.length)
-  const data = dataCodewordBytes([...bytes], version)
-  const codewords = interleave(data, version)
+  const version = versionFor(bytes.length, level)
+  const data = dataCodewordBytes([...bytes], version, level)
+  const codewords = interleave(data, version, level)
   const reserved = reservedMap(version)
 
   const build = mask => {
@@ -624,7 +641,7 @@ export function encodeMatrix(text, { mask: forcedMask } = {}) {
     drawAlignment(cells, version)
     drawVersion(cells, version)
     placeData(cells, codewords, reserved, version, mask)
-    drawFormat(cells, mask)
+    drawFormat(cells, mask, level)
     return cells
   }
 
@@ -632,7 +649,7 @@ export function encodeMatrix(text, { mask: forcedMask } = {}) {
     if (!Number.isInteger(forcedMask) || forcedMask < 0 || forcedMask > 7) {
       throw new Error(`mask ${forcedMask} is outside 0..7`)
     }
-    return { version, mask: forcedMask, cells: build(forcedMask) }
+    return { version, level, mask: forcedMask, cells: build(forcedMask) }
   }
 
   let best = null
@@ -641,5 +658,5 @@ export function encodeMatrix(text, { mask: forcedMask } = {}) {
     const score = penaltyScore(cells)
     if (best === null || score < best.score) best = { mask, cells, score }
   }
-  return { version, mask: best.mask, cells: best.cells }
+  return { version, level, mask: best.mask, cells: best.cells }
 }

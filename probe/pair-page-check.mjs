@@ -208,6 +208,11 @@ check('the settings card gets JSON', () => {
   ok(snapshot.path.startsWith('M'))
   strictEqual(snapshot.endpoints.length > 0, true)
   strictEqual(typeof snapshot.expiresAt, 'string')
+  // Level L and a matrix sized from the ticket, not a fixed box: a 542-byte
+  // ticket at level M is 89 modules, and 89 modules in 188px is 2.1px each,
+  // which is why every scanner failed before this changed.
+  strictEqual(snapshot.level, 'L')
+  strictEqual(snapshot.relay, false)
 })
 
 // The card's path and the page's matrix must describe the same symbol, or the

@@ -17,6 +17,7 @@ import { networkInterfaces } from 'node:os'
 
 import { credentialKey } from './credentials-key.js'
 import { createTicket, encodeTicket, PAIRING_TICKET_TTL_MS, ticketToJson } from './pairing.js'
+import { PAIRED_TICKET_TTL_MS, PAIRING_NAMESPACE, servePairing } from './pairing-rpc.js'
 import { INSTRUCTIONS_NAMESPACE, serveInstructions } from './instructions.js'
 import { LinkServer, pairingProof } from './link.js'
 import { newDeviceId } from './ids.js'
@@ -44,6 +45,15 @@ const RECORD_ID = 'identity'
  * browser authentication — a route outside it would have to re-earn all three.
  */
 const PAGE_PATH = '/api/pocket-harness/pair'
+
+/**
+ * Error-correction level used for the pairing code on screen.
+ *
+ * L, not M. A camera photographing a monitor sees a pristine symbol, so the
+ * redundancy only costs matrix size — and matrix size is exactly what decides
+ * whether a phone can resolve the modules at all.
+ */
+const PAGE_EC_LEVEL = 'L'
 
 /**
  * Starts the Host side of Pocket Harness.
@@ -84,7 +94,7 @@ export function apply(ctx, config = {}) {
       if (epoch !== mine) return null
       const current = new LinkServer({
         identity,
-        createGateway: peer => gatewayFor(ctx, peer),
+        createGateway: peer => gatewayFor(ctx, peer, { refresh: () => state.pairedTicket(current.port) }),
         authorize: request => state.authorize(request),
         logger: ctx.logger,
         hostName: config.hostName ?? 'Pocket Harness Host',
@@ -255,12 +265,15 @@ async function startRelay(ctx, config, state, server) {
  * `openWireStream` for streams. Both are undocumented internals, hence the
  * runtime shape checks and the graceful "unsupported" fallback.
  */
-function gatewayFor(ctx, peer) {
+function gatewayFor(ctx, peer, { refresh } = {}) {
   const gateway = ctx.typertGateway
   return {
     invoke: request => {
       if (request.namespace === INSTRUCTIONS_NAMESPACE) {
         return Promise.resolve().then(() => serveInstructions(request))
+      }
+      if (request.namespace === PAIRING_NAMESPACE) {
+        return Promise.resolve().then(() => servePairing(request, { issue: refresh }))
       }
       return gateway.invoke({ ...request, peer })
     },
@@ -453,6 +466,34 @@ class HostState {
     // minting a second one whose secret would immediately supersede this one.
     this.#ticket = ticket
     return ticket
+  }
+
+  /**
+   * Builds the ticket an already-paired phone keeps, so it can follow this Host
+   * when the network changes.
+   *
+   * Two differences from [newTicket] are the point of it: there is no pairing
+   * secret, because the caller was admitted by its pinned key and must not be
+   * able to pair anyone else; and it lives far longer, because it grants no new
+   * access — it only says where the Host can currently be reached.
+   */
+  async pairedTicket(port) {
+    const identity = await this.identity()
+    const relay = {}
+    if (this.advertisesRelay) {
+      relay.relayUrl = this.#relayUrl
+      relay.relayRoom = await this.relayRoom()
+      relay.relayToken = this.relayToken()
+    }
+    return createTicket({
+      hostDeviceId: identity.deviceId,
+      hostPublicKey: identity.publicKey,
+      hostName: this.#hostName,
+      lanEndpoints: lanEndpoints(port),
+      ...relay,
+      pairingSecret: null,
+      ttlMs: PAIRED_TICKET_TTL_MS,
+    })
   }
 
   /**
@@ -682,17 +723,27 @@ function servePage(state, request, response) {
  */
 function pairingSnapshot(ticket) {
   if (ticket === null) {
-    return { ready: false, ticket: null, name: null, endpoints: [], expiresAt: null, size: 0, path: '' }
+    return { ready: false, ticket: null, name: null, endpoints: [], expiresAt: null, relay: false, size: 0, path: '' }
   }
   const json = ticketToJson(ticket)
-  const { cells, version } = encodeMatrix(encodeTicket(ticket))
+  // Level L on purpose. A camera reading a screen never meets a damaged symbol,
+  // so the error-correction budget buys nothing, while every level up costs a
+  // larger matrix and therefore smaller modules. At a real 542-byte ticket the
+  // difference is 105x105 at Q versus 81x81 at L: the code has to stay legible
+  // at the size a settings card can offer.
+  const { cells, version, level } = encodeMatrix(encodeTicket(ticket), { level: PAGE_EC_LEVEL })
   return {
     ready: true,
     ticket: encodeTicket(ticket),
     name: typeof json.name === 'string' ? json.name : 'Pocket Harness Host',
     endpoints: Array.isArray(json.lan) ? json.lan : [],
     expiresAt: typeof json.exp === 'string' ? json.exp : null,
+    // Whether a phone that scans this can be reached from outside the LAN. The
+    // card says so plainly, because "it worked at home" is the failure users hit
+    // when a ticket has no relay and they travel with the laptop.
+    relay: typeof json.relay === 'string' && json.relay.length > 0,
     version,
+    level,
     size: cells.length,
     path: qrPath(cells),
   }
@@ -734,10 +785,14 @@ function escapeHtml(value) {
  * 69x69, and that many elements makes a page that is slow to paint for no gain.
  */
 function qrSvg(ticketText) {
-  const { cells, version } = encodeMatrix(ticketText)
+  const { cells, version } = encodeMatrix(ticketText, { level: PAGE_EC_LEVEL })
   const size = cells.length
+  // Six pixels per module, the usual rule of thumb for a camera reading a screen.
+  // A fixed 320px box would have shrunk a version 16 symbol to under four, which
+  // is why phones that "should" have scanned it did not.
+  const side = Math.max(260, size * 6)
   return (
-    `<svg viewBox="0 0 ${size} ${size}" width="320" height="320" role="img" ` +
+    `<svg viewBox="0 0 ${size} ${size}" width="${side}" height="${side}" role="img" ` +
     `aria-label="配对二维码" shape-rendering="crispEdges" data-version="${version}">` +
     `<rect width="${size}" height="${size}" fill="#ffffff"/>` +
     `<path d="${qrPath(cells)}" fill="#000000"/>` +
