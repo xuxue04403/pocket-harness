@@ -8,7 +8,6 @@
 // 更新」时会把连接挂到超时，而且只处理 refs/heads/*，tag 会被静默丢掉。
 import fs from 'node:fs';
 import https from 'node:https';
-import tls from 'node:tls';
 import dns from 'node:dns';
 import { promisify } from 'node:util';
 
@@ -20,17 +19,25 @@ const EDGES = {
   'github.com': ['20.247.166.64', '20.205.243.166', '20.27.177.113', '140.82.112.3'],
 };
 
+// 探针必须走一次真正的 HTTPS 请求，不能只做 TLS 握手：这台机器上有地址能完成
+// 握手却在之后一个字节都收不到（TLS 层成功、HTTP 层黑洞），只测 TLS 会把死地址
+// 当活地址挑进来，然后在推 3 MB 的 pack 时超时。
 function probe(host, address, timeoutMs) {
   return new Promise((resolve) => {
-    const socket = tls.connect({ host: address, servername: host, port: 443, timeout: timeoutMs }, () => {
-      socket.end();
-      resolve(true);
-    });
-    socket.setTimeout(timeoutMs, () => {
-      socket.destroy();
+    const req = https.request(
+      { host: address, servername: host, port: 443, path: '/', method: 'GET', timeout: timeoutMs, headers: { Host: host, 'User-Agent': 'pocket-harness-publisher' } },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(true));
+        res.on('error', () => resolve(false));
+      },
+    );
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
       resolve(false);
     });
-    socket.on('error', () => resolve(false));
+    req.on('error', () => resolve(false));
+    req.end();
   });
 }
 

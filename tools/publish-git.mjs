@@ -112,7 +112,15 @@ if (!branchSha) {
 
 // 从某个 commit 出发，收集「提交 + 它引用的所有树与 blob」。
 // isomorphic-git 没有 rev-list，所以要自己走一遍；返回的 oid 集合直接交给 packObjects。
-async function closureOf(commitSha) {
+//
+// stopAt 是远端已有的提交：从它可达的对象一律不打包。远端每次只多几个提交，
+// 不传这个参数就会把整部历史（近 2000 个对象、3 MB 以上）重新送一遍——那不是
+// 体积问题，而是每次推 3 MB 都会更容易撞上本机那条不稳定的出口。
+async function closureOf(commitSha, stopAt = null) {
+  const skip = new Set();
+  if (stopAt) {
+    for (const commit of await git.log({ fs, dir: root, ref: stopAt })) skip.add(commit.oid);
+  }
   const seen = new Set();
   const addTree = async (oid) => {
     if (!oid || seen.has(oid)) return;
@@ -126,7 +134,7 @@ async function closureOf(commitSha) {
   };
   const log = await git.log({ fs, dir: root, ref: commitSha });
   for (const commit of log) {
-    if (seen.has(commit.oid)) continue;
+    if (seen.has(commit.oid) || skip.has(commit.oid)) continue;
     seen.add(commit.oid);
     const { object } = await git.readObject({ fs, dir: root, oid: commit.oid });
     await addTree(object.tree);
@@ -174,7 +182,7 @@ if (remoteBranch === branchSha) {
   console.log(`分支 refs/heads/${branch} 远端已是最新（${branchSha.slice(0, 7)}），跳过推送。`);
 } else {
   console.log(`推送分支 refs/heads/${branch} → ${owner}/${repo}（${(remoteBranch || '空').slice(0, 7)} → ${branchSha.slice(0, 7)}）`);
-  const oids = await closureOf(branchSha);
+  const oids = await closureOf(branchSha, remoteBranch);
   console.log(`  打包 ${oids.length} 个对象…`);
   const pack = await packOf(oids);
   console.log(`  ${(pack.length / 1024 / 1024).toFixed(2)} MB`);
