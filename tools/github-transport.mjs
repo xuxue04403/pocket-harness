@@ -172,7 +172,7 @@ export function createTransport({ token, owner, repo, log = () => {} }) {
   // 意味着一次短暂的抖动就让整次发版失败。第二轮前停一下，让出口回过气来。
   async function receivePack(refName, oldSha, newSha, pack) {
     const body = Buffer.concat([
-      pkt(`${oldSha} ${newSha} ${refName}\u0000report-status side-band-64k agent=pocket-harness/0.1.0`),
+      pkt(`${oldSha} ${newSha} ${refName}\u0000report-status side-band-64k agent=pocket-harness/0.1.7`),
       FLUSH,
       pack,
     ]);
@@ -201,10 +201,18 @@ export function createTransport({ token, owner, repo, log = () => {} }) {
             timeoutMs: 240000,
           });
           const said = readReport(res.body).replace(/\u0000/g, '').replace(/\r/g, '\n').trim();
-          if (res.status >= 200 && res.status < 300 && !/unpack (?!ok)/.test(said) && !/^ng /m.test(said)) {
+          // 服务端一个字都没说，不能算成功：HTTP 200 只说这条连接活着，接受与否
+          // 是 report-status 里的事。静默和「成功了」在字节上长得一样，误判的方向
+          // 只能是「当作失败」——漏判成功会让人重跑一次，漏判失败会让一次没推上去
+          // 的发版印出「ok」。
+          if (res.status >= 200 && res.status < 300 && said.length > 0 && !/unpack (?!ok)/.test(said) && !/^ng /m.test(said)) {
             return { ok: true, said };
           }
-          lastError = new Error(`被拒（HTTP ${res.status}）：${said.split('\n').filter(Boolean).slice(-3).join(' / ') || '(服务端没说话)'}`);
+          lastError = new Error(
+            res.status >= 200 && res.status < 300 && said.length === 0
+              ? `被拒（HTTP ${res.status}）：服务端没有回 report-status`
+              : `被拒（HTTP ${res.status}）：${said.split('\n').filter(Boolean).slice(-3).join(' / ') || '(服务端没说话)'}`,
+          );
         } catch (error) {
           lastError = error;
           log(`  ${address} 失败：${error.message}`);

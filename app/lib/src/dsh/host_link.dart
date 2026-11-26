@@ -1429,7 +1429,15 @@ class HostLink {
 
   Future<void> _openQuestions() async {
     try {
-      final events = _events = await RemoteEvents.open(_client.rpc);
+      final events = await RemoteEvents.open(_client.rpc);
+      // The link may have been closed while the stream was being opened; the
+      // stream would then be orphaned on the Host and still claim approvals for
+      // a phone that is gone, so hand it straight back.
+      if (_questions.isClosed) {
+        await events.close();
+        return;
+      }
+      _events = events;
       events.invocations.listen((invocation) {
         final question = readQuestion(invocation);
         if (question == null) {
@@ -1446,7 +1454,7 @@ class HostLink {
       });
     } catch (error) {
       _questionStreamDead = true;
-      _questions.addError(error);
+      if (!_questions.isClosed) _questions.addError(error);
     }
   }
 
@@ -1657,6 +1665,10 @@ class HostLink {
     await _events?.close();
     _events = null;
     if (!_questions.isClosed) await _questions.close();
+    // `_openQuestions` may still be in flight; clearing the memo lets a caller
+    // that somehow starts again retry instead of reusing a future that already
+    // resolved against closed controllers.
+    _starting = null;
     await _client.close();
   }
 }

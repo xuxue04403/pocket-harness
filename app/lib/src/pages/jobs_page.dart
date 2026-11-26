@@ -141,7 +141,12 @@ class _JobsPageState extends State<JobsPage> {
       if (left.isLive != right.isLive) return left.isLive ? -1 : 1;
       final leftAt = left.startedAt;
       final rightAt = right.startedAt;
-      if (leftAt == null || rightAt == null) return 0;
+      // A job without a start time cannot be placed, so it sinks to the end
+      // instead of comparing equal — returning 0 for "unknown vs known" is not
+      // a valid ordering and makes the result depend on input order.
+      if (leftAt == null && rightAt == null) return 0;
+      if (leftAt == null) return 1;
+      if (rightAt == null) return -1;
       return rightAt.compareTo(leftAt);
     });
     return ListView.separated(
@@ -248,6 +253,7 @@ class _JobOutputPageState extends State<JobOutputPage> {
 
   void _follow() {
     _stream?.cancel();
+    _resetOutput();
     _stream = widget.link
         .followJob(widget.job.id, sessionId: widget.sessionId)
         .listen(
@@ -269,6 +275,22 @@ class _JobOutputPageState extends State<JobOutputPage> {
             setState(() => _done = true);
           },
         );
+  }
+
+  /// Drops everything the previous attempt accumulated.
+  ///
+  /// Retrying re-reads the job from the Host, so keeping the old text would
+  /// render the same lines twice, and keeping `_error` would leave the error
+  /// branch in charge no matter what the new stream says.
+  void _resetOutput() {
+    _error = null;
+    _done = false;
+    _output.clear();
+  }
+
+  void _retry() {
+    setState(_resetOutput);
+    _follow();
   }
 
   void _scrollToEnd() {
@@ -310,7 +332,7 @@ class _JobOutputPageState extends State<JobOutputPage> {
         ),
       ),
       body: _error != null
-          ? _Problem(error: _error!, onRetry: _follow)
+          ? _Problem(error: _error!, onRetry: _retry)
           : text.isEmpty
             ? Center(
                 child: Text(

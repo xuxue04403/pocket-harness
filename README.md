@@ -232,7 +232,7 @@ WorkingDirectory=/opt/pocket-harness-relay
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=8080
-Environment=POCKET_HARNESS_RELAY_TOKEN=<第 2 步那个口令>
+EnvironmentFile=/etc/pocket-harness-relay.env
 ExecStart=/usr/bin/node node_modules/pocket-harness-relay/run.mjs
 Restart=always
 NoNewPrivileges=yes
@@ -241,6 +241,13 @@ DynamicUser=yes
 
 [Install]
 WantedBy=multi-user.target
+```
+
+口令放单独一个 `0600` 的文件里，因为 unit 是 `0644` 的，任何本机用户都能读：
+
+```bash
+sudo install -m 0600 -o root -g root /dev/null /etc/pocket-harness-relay.env
+sudo sh -c 'printf "POCKET_HARNESS_RELAY_TOKEN=%s\n" "<第 2 步那个口令>" > /etc/pocket-harness-relay.env'
 ```
 
 `HOST=127.0.0.1` 是关键：中继只听本机，外面进不来，入口只有 nginx 那个 443。

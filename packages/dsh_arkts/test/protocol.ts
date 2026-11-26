@@ -30,7 +30,9 @@ import {
   ticketFingerprint,
   PAIRING_TICKET_VERSION,
 } from '../src/pairing'
-import { decodeBase64Url, encodeBase64Url } from '../src/bytes'
+import { decodeBase64Url, encodeBase64Url, utf8 } from '../src/bytes'
+import { decodeTicket, encodeTicket, formatEndpoint, hasRelay, isTicketValid, parseEndpoint, ticketFingerprint } from '../src/pairing'
+import { ticketRemainingMs } from '../src/pairing_text'
 import { NoiseIkSession, createNoisePrologue } from '../src/noise'
 import { x25519PublicKey } from '../src/curve25519'
 
@@ -191,6 +193,28 @@ console.log('pairing')
   ok('a fresh ticket is valid', isTicketValid(decoded, 1_800_000_000_000))
   ok('an expired ticket is not', !isTicketValid(decoded, 1_900_000_000_001))
   ok('an endless ticket never expires', isTicketValid({ ...decoded, expiresAt: 0 }, 9_999_999_999_999))
+
+  // A code as the Host really writes it: `exp` is an ISO 8601 string, not a number.
+  // Reading it as a number used to fall through to 0, and 0 means "never expires",
+  // so every real pairing code looked eternal.
+  {
+    const hostShaped = `pocketharness://pair?t=${encodeBase64Url(
+      utf8(
+        JSON.stringify({
+          v: PAIRING_TICKET_VERSION,
+          id: ticket.hostDeviceId,
+          key: encodeBase64Url(hostPublic),
+          name: ticket.hostName,
+          lan: ticket.lanEndpoints,
+          exp: new Date(ticket.expiresAt).toISOString(),
+        }),
+      ),
+    )}`
+    const read = decodeTicket(hostShaped)
+    equals('the host writes exp as ISO, and it is read as a moment', read.expiresAt, ticket.expiresAt)
+    ok('a host-written code does expire', !isTicketValid(read, ticket.expiresAt + 1))
+    equals('the countdown works on a host-written code', ticketRemainingMs(read, ticket.expiresAt - 60_000), 60_000)
+  }
 
   let badScheme = false
   try {

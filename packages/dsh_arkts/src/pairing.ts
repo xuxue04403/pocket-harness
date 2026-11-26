@@ -95,8 +95,25 @@ export function decodeTicket(text: string): PairingTicket {
     relayRoom: typeof room === 'string' && room.length > 0 ? room : null,
     relayToken: typeof rtok === 'string' && rtok.length > 0 ? rtok : null,
     pairingSecret: typeof secret === 'string' && secret.length > 0 ? secret : null,
-    expiresAt: typeof exp === 'number' ? exp : 0,
+    expiresAt: parseTicketExpiry(exp),
   }
+}
+
+/**
+ * 票据的 `exp` 怎么读。
+ *
+ * Host（`host/pairing.js`）与 Dart（`pairing.dart`）写出去的都是 **ISO 8601 字符串**，
+ * 只有这个包的 `ticketToJson` 写毫秒数。两边都得认，否则真实配对码里的过期时间会被
+ * 读成 0——而 0 的含义是「永不过期」，于是扫码之后倒计时和「已过期」提示一起消失，
+ * 看起来像功能没做，实际是票据被判成永远有效。
+ */
+function parseTicketExpiry(exp: unknown): number {
+  if (typeof exp === 'number') return Number.isFinite(exp) && exp > 0 ? exp : 0
+  if (typeof exp === 'string') {
+    const parsed = Date.parse(exp)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+  }
+  return 0
 }
 
 export function isTicketValid(ticket: PairingTicket, now: number): boolean {

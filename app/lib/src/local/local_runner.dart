@@ -46,6 +46,13 @@ class LocalRunner {
   final LocalHost host;
   final String port;
 
+  /// How long a single native command may run before it is treated as hung.
+  ///
+  /// The whole install downloads ~1.6 GB and installs Node plus DSH, so a slow
+  /// network can legitimately take many minutes; this is only a backstop for a
+  /// native side that never sends its exit line at all.
+  static const Duration _exitTimeout = Duration(minutes: 30);
+
   LocalLayout? _layout;
 
   /// 已经跑起来的 dsh 的 token 地址。为 null 表示没跑。
@@ -443,7 +450,13 @@ class LocalRunner {
     });
     try {
       await host.start(tag: tag, argv: argv, cwd: cwd);
-      await done.future;
+      // A native exit that never arrives must not strand the caller forever:
+      // provisioning runs on this path, and a hung install looks exactly like a
+      // slow one to the person waiting for it.
+      await done.future.timeout(
+        _exitTimeout,
+        onTimeout: () => throw LocalDshError('命令没有回执（$tag 超过 ${_exitTimeout.inMinutes} 分钟没有结束）'),
+      );
     } finally {
       await sub.cancel();
     }

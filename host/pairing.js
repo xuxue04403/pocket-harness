@@ -57,8 +57,21 @@ export function decodeTicket(text) {
     relayRoom: typeof json.room === 'string' && json.room.length > 0 ? json.room : null,
     relayToken: typeof json.rtok === 'string' && json.rtok.length > 0 ? json.rtok : null,
     pairingSecret: typeof json.secret === 'string' && json.secret.length > 0 ? json.secret : null,
-    expiresAt: typeof json.exp === 'string' ? Date.parse(json.exp) : null,
+    // Canonical form is the ISO 8601 string this file writes out, but the ArkTS
+    // package has always written milliseconds and older codes are still in
+    // circulation. Read both rather than turning a numeric `exp` into NaN.
+    expiresAt: parseExpiry(json.exp),
   }
+}
+
+/** Reads `exp` in either the ISO string or the millisecond form. */
+export function parseExpiry(exp) {
+  if (typeof exp === 'string') {
+    const parsed = Date.parse(exp)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  if (typeof exp === 'number' && Number.isFinite(exp)) return exp
+  return null
 }
 
 /** Whether the ticket is still usable at [now]. */

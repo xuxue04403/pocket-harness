@@ -31,8 +31,9 @@ class HostStore {
     final preferences = await SharedPreferences.getInstance();
     // resetOnError keeps a phone whose keystore entry was invalidated (a
     // restore to new hardware, for example) working: it gets a fresh identity
-    // and pairs again instead of crashing on every launch.
-    const secrets = FlutterSecureStorage(aOptions: AndroidOptions());
+    // and pairs again instead of crashing on every launch. It is the plugin's
+    // default, but passing it keeps this call honest if that default changes.
+    const secrets = FlutterSecureStorage(aOptions: AndroidOptions(resetOnError: true));
     return HostStore._(preferences, secrets);
   }
 

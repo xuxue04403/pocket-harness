@@ -18,7 +18,7 @@ import { createTicket, decodeTicket, encodeTicket, isTicketValid } from './pairi
 import { NoiseIkResponder, createNoisePrologue, x25519PrivateToPublic } from './noise.js'
 import { open, seal } from './chacha20_poly1305.js'
 import { encodeEnvelope, envelope } from './envelope.js'
-import { LinkServer } from './link.js'
+import { HELLO_TIMEOUT_MS, HANDSHAKE_TIMEOUT_MS, LinkServer } from './link.js'
 import { RpcServer } from './rpc.js'
 import { apply, sameProof } from './index.js'
 
@@ -201,6 +201,57 @@ test('a connection that talks during admission is dropped at the queue ceiling',
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(closed, true, 'the link should close once the queue is full')
   release()
+  await server.close()
+})
+
+test('an admitted connection that never finishes Noise is closed', async () => {
+  // Admission clears the hello deadline, because the client is now expected to
+  // send its Noise message one. Without a second deadline a peer that proves a
+  // device id and then goes quiet holds one of the eight slots forever.
+  const warnings = []
+  const server = new LinkServer({
+    identity: { deviceId: newDeviceId(), privateKey: Buffer.alloc(32, 9), publicKey: Buffer.alloc(32, 9) },
+    createGateway: () => ({ invoke: async () => ({}), stream: async () => (async function* () {})() }),
+    authorize: () => ({
+      ok: true,
+      pinnedKey: Buffer.alloc(32, 8),
+      createPeer: async () => ({ dispose: async () => {} }),
+    }),
+    logger: { info: () => {}, warn: message => warnings.push(message) },
+    hostName: 'Test Host',
+    handshakeTimeoutMs: 40,
+  })
+  let frameHandler = () => {}
+  let closed = false
+  const transport = {
+    onFrame: handler => { frameHandler = handler },
+    onClose: () => {},
+    send: () => {},
+    close: () => { closed = true },
+  }
+  const link = server.attach(transport)
+  assert.ok(link !== null)
+  frameHandler(encodeFrame(
+    FRAME_KIND.control,
+    Buffer.from(JSON.stringify({
+      v: 1,
+      connection: 'noise-timeout-probe',
+      client: newDeviceId(),
+      proof: 'unused',
+    }), 'utf8'),
+  ))
+  // Admission awaits `authorize` and `createPeer`; give it a turn to finish
+  // before the deadline can fire.
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(closed, false, 'the link is still inside its handshake window')
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.equal(closed, true, 'a silent handshake must close the link')
+  assert.equal(
+    warnings.some(message => message.includes('did not finish Noise in time')),
+    true,
+    `expected a handshake warning, got ${JSON.stringify(warnings)}`,
+  )
+  assert.ok(HANDSHAKE_TIMEOUT_MS > HELLO_TIMEOUT_MS)
   await server.close()
 })
 

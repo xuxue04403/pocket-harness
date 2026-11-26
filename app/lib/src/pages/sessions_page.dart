@@ -172,7 +172,7 @@ class _SessionsPageState extends State<SessionsPage> {
     // to "use the computer's default" rather than blocking session creation.
     final choice = await showNewSessionSheet(
       context,
-      presets: link.presets(),
+      presets: link.presets,
       initialCwd: _lastCwd,
     );
     if (choice == null || !mounted) return;

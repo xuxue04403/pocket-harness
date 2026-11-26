@@ -242,6 +242,20 @@ function guardPath(path, { forWrite = false, create = false, env = process.env }
 }
 
 /**
+ * `realpathSync`, but resolving Windows junctions too.
+ *
+ * The plain call is documented to follow links, yet on Windows it answers with
+ * the link path itself for a junction (reproduced on Node 26.8.1 under a
+ * temporary directory). A scope check built on that answer sees the link inside
+ * the project and lets the write through, which is exactly the escape the guard
+ * exists to stop. `native` asks the OS instead of walking it in JS and gets it
+ * right, so ask for that when the runtime offers it.
+ */
+function resolveReal(path) {
+  return typeof realpathSync.native === 'function' ? realpathSync.native(path) : realpathSync(path)
+}
+
+/**
  * The real path of `target`, following links and junctions.
  *
  * `resolve()` is purely lexical, so it is only good for comparing strings a
@@ -255,7 +269,7 @@ function realTarget(target) {
   const rest = []
   for (;;) {
     try {
-      return rest.length === 0 ? realpathSync(current) : join(realpathSync(current), ...rest)
+      return rest.length === 0 ? resolveReal(current) : join(resolveReal(current), ...rest)
     } catch {
       const parent = dirname(current)
       // Nothing on this path exists up to the root; the string is all we have.

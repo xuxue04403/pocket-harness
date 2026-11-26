@@ -39,6 +39,7 @@ for (const name of names) {
   console.log(`${name}  ${statSync(path).size}`);
 }
 
-// GNU coreutils 的格式：摘要、两个空格、文件名，行尾 LF。
-writeFileSync(join(dir, 'SHA256SUMS.txt'), `${lines.join('\n')}\n`, { encoding: 'latin1' });
+// GNU coreutils 的格式：摘要、两个空格、文件名，行尾 LF。用 utf8 而不是 latin1：
+// 文件名里可能带上发布说明中的中文，latin1 会把多字节字符截成一个个单字节。
+writeFileSync(join(dir, 'SHA256SUMS.txt'), `${lines.join('\n')}\n`, { encoding: 'utf8' });
 console.log(`wrote ${join(dir, 'SHA256SUMS.txt')}`);

@@ -13,6 +13,7 @@ import 'package:pocket_harness/src/dsh/instruction_paths.dart';
 import 'package:pocket_harness/src/dsh/markdown.dart';
 import 'package:pocket_harness/src/dsh/outgoing_image.dart';
 import 'package:pocket_harness/src/dsh/questions.dart';
+import 'package:pocket_harness/src/dsh/scroll_follow.dart';
 // The grouping is plain Dart, deliberately separate from the page: importing
 // the page here would drag Flutter widgets into a test that does not need them.
 import 'package:pocket_harness/src/dsh/session_groups.dart';
@@ -1510,6 +1511,30 @@ flutter pub get
         ),
       );
       expect(find.byType(SelectableText), findsNothing);
+    });
+  });
+
+  group('scroll follow', () {
+    test('follows the tail only when the reader is at the bottom', () {
+      // A short conversation fits: there is nothing to get in the way of.
+      expect(followsTail(0, 0), isTrue);
+      expect(followsTail(1000, 1000), isTrue);
+      // Within a message of the bottom still counts, because a fling never
+      // lands exactly on the maximum.
+      expect(followsTail(900, 1000), isTrue);
+      // Reading history must not be interrupted by an arriving reply.
+      expect(followsTail(400, 1000), isFalse);
+      expect(followsTail(0, 5000), isFalse);
+    });
+
+    test('keeps the reader place when older messages are prepended', () {
+      // 2000 tall, reading at 1500 (500 above the bottom); the list grows to
+      // 8000, so the same content now ends 500 above 8000.
+      expect(offsetHoldingDistance(1500, 2000, 8000), 7500);
+      expect(offsetHoldingDistance(1500, 2000, 2000), 1500);
+      // Never negative, never past the new end.
+      expect(offsetHoldingDistance(10, 2000, 100), 0);
+      expect(offsetHoldingDistance(0, 100, 50), 0);
     });
   });
 }

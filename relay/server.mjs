@@ -12,7 +12,16 @@ import { WebSocketServer } from 'ws'
 
 /** Max bytes the relay will hold for one peer before applying backpressure. */
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024
-/** A room disappears once both sides are gone. */
+/**
+ * Backstop for rooms that outlive both peers.
+ *
+ * The `close` handler already deletes a room the moment it empties, so this
+ * normally finds nothing. It exists for the case where that handler never ran —
+ * a socket that was replaced without emitting `close` — and then any empty room
+ * older than the cutoff is garbage. The cutoff is measured from creation, not
+ * from the last frame, which is fine for a backstop: a room that still has a
+ * peer in it is skipped by the `room.empty` test regardless of its age.
+ */
 const ROOM_IDLE_MS = 60_000
 /** Largest single frame a peer may send. */
 const MAX_FRAME_BYTES = 4 * 1024 * 1024 + 64
@@ -64,9 +73,14 @@ class Room {
     const peer = from === this.host ? this.client : this.host
     if (peer === null || peer.readyState !== peer.OPEN) return
     if (peer.bufferedAmount > MAX_BUFFERED_BYTES) {
-      // The far side is not draining; dropping the peer is better than growing
-      // without bound. The client sees a closed link and reconnects.
-      peer.close(1013, 'too much buffered data')
+      // The far side is not draining. Closing the *peer* used to be the only
+      // reaction, but that is the receiver being punished for the sender's pace —
+      // and the sender kept sending, because nothing told it to stop. Each later
+      // frame then hit the `readyState !== OPEN` guard above and was dropped in
+      // silence, so both ends sat in a room that looked healthy while bytes went
+      // nowhere. Close the sender instead: it is the one that can slow down, and
+      // its reconnect starts a fresh room with nothing buffered.
+      from.close(1013, 'too much buffered data')
       return
     }
     peer.send(data, { binary: isBinary })
@@ -103,6 +117,14 @@ export function createRelay({ token, path = '/relay', log = () => {} } = {}) {
     response.end('not found\n')
   })
   const wss = new WebSocketServer({ server, path, maxPayload: MAX_FRAME_BYTES })
+  // ws re-emits the http server's 'error' on the WebSocketServer itself
+  // (createWebSocketServer attaches `error: this.emit.bind(this, 'error')`).
+  // An EventEmitter with no 'error' listener throws, so a port that is already
+  // taken printed a Node stack instead of run.mjs's readable message — and the
+  // listen() promise below rejected with the same error a second time.
+  wss.on('error', error => {
+    log(`relay server error: ${error?.code ?? error?.message ?? error}`)
+  })
 
   wss.on('connection', (socket, request) => {
     void request
@@ -121,30 +143,39 @@ export function createRelay({ token, path = '/relay', log = () => {} } = {}) {
 
     socket.on('message', (data, isBinary) => {
       if (joined === null) {
+        // Every rejection below leaves the socket closing but keeps this timer
+        // armed; it fires ten seconds later, after the `close` handler that would
+        // have cleared it may already have run (the timer holds a reference to a
+        // socket in CLOSING). Clearing it here keeps the rejection path from
+        // stacking timers on a busy port.
+        const refuse = (code, reason) => {
+          clearTimeout(joinTimeout)
+          socket.close(code, reason)
+        }
         if (isBinary) {
-          socket.close(4400, 'the first message must be a hello')
+          refuse(4400, 'the first message must be a hello')
           return
         }
         let hello
         try {
           hello = JSON.parse(data.toString('utf8'))
         } catch {
-          socket.close(4400, 'malformed hello')
+          refuse(4400, 'malformed hello')
           return
         }
         const role = hello?.role
         const roomName = hello?.room
         if (role !== 'host' && role !== 'client') {
-          socket.close(4400, 'hello.role must be host or client')
+          refuse(4400, 'hello.role must be host or client')
           return
         }
         if (typeof roomName !== 'string' || !/^[A-Za-z0-9_.:-]{8,128}$/.test(roomName)) {
-          socket.close(4400, 'hello.room must be 8..128 URL-safe characters')
+          refuse(4400, 'hello.room must be 8..128 URL-safe characters')
           return
         }
         if (!sameToken(token, hello?.token)) {
           log(`refused a ${role} with a bad token`)
-          socket.close(4403, 'bad token')
+          refuse(4403, 'bad token')
           return
         }
         clearTimeout(joinTimeout)

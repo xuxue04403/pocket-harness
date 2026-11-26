@@ -62,9 +62,17 @@ node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 [Service]
 Environment=HOST=127.0.0.1
 Environment=PORT=8080
-Environment=POCKET_HARNESS_RELAY_TOKEN=<同一个 token>
+EnvironmentFile=/etc/pocket-harness-relay.env
 Restart=always
 NoNewPrivileges=yes
+```
+
+口令不放 unit 里：unit 是 `0644`，任何本机用户都能读到 token。单独一个 `0600` 的环境文件，
+由 systemd 以 root 读取后再降权：
+
+```bash
+sudo install -m 0600 -o root -g root /dev/null /etc/pocket-harness-relay.env
+sudo sh -c 'printf "POCKET_HARNESS_RELAY_TOKEN=%s\n" "<同一个 token>" > /etc/pocket-harness-relay.env'
 ```
 
 nginx 片段（注意 `proxy_pass` 末尾带 `/relay`，因为中继自己的 WebSocket 路径就是 `/relay`，

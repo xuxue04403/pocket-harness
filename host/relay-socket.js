@@ -19,6 +19,8 @@ export class RelaySocket extends EventEmitter {
   #closed = false
   #failure = null
   #handler = null
+  #joined = false
+  #paired = false
 
   constructor(socket) {
     super()
@@ -65,16 +67,30 @@ export class RelaySocket extends EventEmitter {
   #onMessage(data) {
     if (this.#closed) return
     if (typeof data === 'string') {
-      // Control notices carry pairing state, never payload bytes.
-      if (data.includes('peer-gone')) {
+      // Control notices carry pairing state, never payload bytes. Match the
+      // whole JSON contract rather than a substring: a relay with a bug (or a
+      // hostile relay URL in the ticket) must not be able to hand over a socket
+      // with a sentence like "not ready" or keep it alive with "not peer-gone".
+      let notice
+      try {
+        notice = JSON.parse(data)
+      } catch {
+        return
+      }
+      if (notice === null || typeof notice !== 'object' || notice.v !== 1) return
+      if (notice.type === 'peer-gone') {
         this.#fail(new Error('the phone left the relay'))
         return
       }
-      // The relay answers the hello with an ack, then — only once a phone is in
-      // the room too — a separate "ready". A Host can legitimately sit in an
-      // empty room for hours, so joining and pairing must be distinguishable.
-      if (data.includes('"ok":true')) this.emit('joined')
-      if (data.includes('"ready"')) this.emit('ready')
+      if (!this.#joined && notice.ok === true && notice.role === 'host') {
+        this.#joined = true
+        this.emit('joined')
+        return
+      }
+      if (this.#joined && !this.#paired && notice.type === 'ready') {
+        this.#paired = true
+        this.emit('ready')
+      }
       return
     }
     const frame = data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.from(data.buffer ?? data)

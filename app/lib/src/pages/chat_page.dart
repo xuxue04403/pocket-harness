@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import '../dsh/host_link.dart';
 import '../dsh/outgoing_image.dart';
 import '../dsh/questions.dart';
+import '../dsh/scroll_follow.dart';
 import '../dsh/tool_labels.dart';
 import '../widgets/markdown_body.dart';
 import 'files_page.dart';
@@ -203,6 +204,10 @@ class _ChatPageState extends State<ChatPage> {
             link: widget.link,
             sessionId: forked,
             title: widget.title,
+            // A fork inherits the working directory on the Host, but this page
+            // only knows what it was told: without it, 工作区指令 opens the
+            // global chain and the project's own instructions disappear.
+            cwd: widget.cwd,
           ),
         ),
       );
@@ -243,6 +248,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _answerQuestion(PendingQuestion question, {required _Answer choice}) async {
+    final int index = _questions.indexOf(question);
     setState(() => _questions.remove(question));
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -255,6 +261,10 @@ class _ChatPageState extends State<ChatPage> {
           await widget.link.delegate(question);
       }
     } on Object catch (error) {
+      // The Host is still waiting for an answer, so putting the prompt back is
+      // the only honest thing to do — dropping it hides a turn that is stuck.
+      // It goes back where it was, because the bar lists oldest first.
+      if (mounted) setState(() => _questions.insert(index < 0 ? 0 : index, question));
       messenger.showSnackBar(SnackBar(content: Text('$error')));
     }
   }
@@ -266,11 +276,13 @@ class _ChatPageState extends State<ChatPage> {
       builder: (context) => _ChoiceDialog(question: question),
     );
     if (picked == null || !mounted) return;
+    final int index = _questions.indexOf(question);
     setState(() => _questions.remove(question));
     final messenger = ScaffoldMessenger.of(context);
     try {
       await widget.link.answerChoice(question, picked);
     } on Object catch (error) {
+      if (mounted) setState(() => _questions.insert(index < 0 ? 0 : index, question));
       messenger.showSnackBar(SnackBar(content: Text('$error')));
     }
   }
@@ -279,10 +291,23 @@ class _ChatPageState extends State<ChatPage> {
     _follow = widget.link.follow(widget.sessionId).listen(
       _onFrame,
       onError: (Object error) {
-        if (mounted) setState(() => _error = _describe(error));
+        // Clearing `_loading` matters as much as the message: a stream that
+        // dies before the snapshot arrives would otherwise leave the spinner
+        // turning forever under a banner that already says it is over.
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _error = _describe(error);
+          });
+        }
       },
       onDone: () {
-        if (mounted) setState(() => _error ??= '电脑端关闭了这个会话的实时连接。');
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _error ??= '电脑端关闭了这个会话的实时连接。';
+          });
+        }
       },
     );
   }
@@ -314,7 +339,8 @@ class _ChatPageState extends State<ChatPage> {
           ..addAll(rows);
         _draft = null;
       });
-      _scrollToEnd();
+      // The first paint of a conversation belongs at its newest message.
+      _scrollToEnd(force: true);
       return;
     }
     if (type == 'event') {
@@ -374,7 +400,14 @@ class _ChatPageState extends State<ChatPage> {
     _scrollToEnd();
   }
 
-  void _scrollToEnd() {
+  void _scrollToEnd({bool force = false}) {
+    // A reply that arrives while the reader has scrolled up to read history
+    // must not drag them back to the bottom: that makes the one moment they
+    // wanted to look at something the moment they cannot. Following resumes by
+    // itself once they scroll back down.
+    if (!force && _scroll.hasClients && !followsTail(_scroll.offset, _scroll.position.maxScrollExtent)) {
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
       _scroll.animateTo(
@@ -393,12 +426,25 @@ class _ChatPageState extends State<ChatPage> {
       final records = page['records'];
       final older = buildTranscript(records is List ? records : const []);
       if (!mounted || older.isEmpty) return;
+      // Inserting rows above the viewport moves everything the reader is
+      // looking at; remember the distance from the bottom so it can be put
+      // back once the new extent is known.
+      final previousExtent = _scroll.hasClients ? _scroll.position.maxScrollExtent : null;
+      final previousOffset = _scroll.hasClients ? _scroll.offset : null;
       setState(() {
         _rows
           ..removeWhere((row) => older.any((entry) => entry.seq == row.seq))
           ..addAll(older)
           ..sort((left, right) => left.seq.compareTo(right.seq));
       });
+      if (previousExtent != null && previousOffset != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_scroll.hasClients) return;
+          _scroll.jumpTo(
+            offsetHoldingDistance(previousOffset, previousExtent, _scroll.position.maxScrollExtent),
+          );
+        });
+      }
     } on Object catch (error) {
       messenger.showSnackBar(SnackBar(content: Text('$error')));
     }
@@ -415,8 +461,11 @@ class _ChatPageState extends State<ChatPage> {
         if (text.isNotEmpty) {'type': 'text', 'text': text},
         for (final image in images) image.toPart(),
       ], mode: mode);
+      // Only after the message is really gone: the page may be popped while the
+      // send is in flight, and touching a disposed controller throws.
+      if (!mounted) return;
       _composer.clear();
-      if (mounted) setState(_pendingImages.clear);
+      setState(_pendingImages.clear);
     } on Object catch (error) {
       messenger.showSnackBar(SnackBar(content: Text('$error')));
     } finally {
@@ -446,7 +495,16 @@ class _ChatPageState extends State<ChatPage> {
       messenger.showSnackBar(const SnackBar(content: Text('只支持 PNG、JPEG、WebP、GIF 图片。')));
       return;
     }
-    final bytes = await file.readAsBytes();
+    final Uint8List bytes;
+    try {
+      bytes = await file.readAsBytes();
+    } on Object catch (error) {
+      // A gallery entry can be a cloud placeholder that failed to download, and
+      // a picture deleted between the picker and the read is ordinary too; the
+      // composer should say so rather than let the future's error escape.
+      messenger.showSnackBar(SnackBar(content: Text('读取这张图片失败：$error')));
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _pendingImages.add(OutgoingImage(bytes: bytes, mediaType: mediaType, name: file.name));
@@ -467,7 +525,8 @@ class _ChatPageState extends State<ChatPage> {
     _composer.selection = TextSelection.collapsed(offset: _composer.text.length);
   }
 
-  Future<void> _cancel() async {    final messenger = ScaffoldMessenger.of(context);
+  Future<void> _cancel() async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
       await widget.link.cancel(widget.sessionId);
     } on Object catch (error) {
@@ -875,8 +934,15 @@ class _AttachmentStripState extends State<_AttachmentStrip> {
   @override
   void didUpdateWidget(covariant _AttachmentStrip oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.sessionId != widget.sessionId ||
-        oldWidget.images.length != widget.images.length) {
+    // Compare the ids, not just the count: a transcript that swaps one image
+    // for another of the same length would otherwise keep the old futures and
+    // paint the previous picture under the new message.
+    final bool sameImages =
+        oldWidget.images.length == widget.images.length &&
+        Iterable<int>.generate(
+          widget.images.length,
+        ).every((index) => oldWidget.images[index].attachmentId == widget.images[index].attachmentId);
+    if (oldWidget.sessionId != widget.sessionId || !sameImages) {
       _futures = _load();
     }
   }

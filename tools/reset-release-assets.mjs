@@ -4,7 +4,7 @@
 // 但这一版换了新的 APK（会话树形视图），跳过会让 release 上留着上一版的文件，
 // 而 SHA256SUMS.txt 已经指向新的字节，两边就对不上了。所以先把旧的清空。
 //
-// 用法：node tools/reset-release-assets.mjs --owner <账号> --tag v0.1.0-beta
+// 用法：node tools/reset-release-assets.mjs --owner <账号> --tag v0.1.7
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ const arg = (name, fallback) => {
 
 const owner = arg('owner');
 const repo = arg('repo', 'pocket-harness');
-const tag = arg('tag', 'v0.1.0-beta');
+const tag = arg('tag', 'v0.1.7');
 
 if (!owner) {
   console.error('缺少 --owner');
@@ -31,7 +31,10 @@ if (!fs.existsSync(tokenFile)) {
   process.exit(1);
 }
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
-if (!token.startsWith('github_pat_') && !token.startsWith('ghp_')) {
+// 只认 github_pat_ / ghp_ 会把 gho_（OAuth）、ghu_（用户到服务器）和
+// ghs_（GitHub App 安装令牌）误判成「没写完整」。这些前缀都是 GitHub 的
+// 正式格式，只要求它看起来像一个 token 就够了。
+if (!/^(github_pat_|gh[pousr]_|ghs_)/.test(token) || token.length < 20) {
   console.error('token 看起来没写完整。');
   process.exit(1);
 }

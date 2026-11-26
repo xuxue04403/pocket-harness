@@ -9,7 +9,7 @@
 //
 // 用法（token 只从文件读，不进命令行、不进 .git/config）：
 //   node tools/publish-git.mjs --owner <账号> [--repo pocket-harness]
-//                              [--branch master] [--tag v0.1.0-beta] [--force]
+//                              [--branch master] [--tag v0.1.7] [--force]
 //
 // 环境变量 POCKET_HARNESS_TOKEN_FILE 可换 token 路径，默认 probe/_gh_token.txt。
 
@@ -51,7 +51,7 @@ const has = (name) => process.argv.includes(`--${name}`);
 
 const owner = arg('owner');
 const repo = arg('repo', 'pocket-harness');
-const tag = arg('tag', 'v0.1.0-beta');
+const tag = arg('tag', 'v0.1.7');
 const branch = arg('branch', 'master');
 const force = has('force');
 
@@ -119,7 +119,17 @@ if (!branchSha) {
 async function closureOf(commitSha, stopAt = null) {
   const skip = new Set();
   if (stopAt) {
-    for (const commit of await git.log({ fs, dir: root, ref: stopAt })) skip.add(commit.oid);
+    try {
+      for (const commit of await git.log({ fs, dir: root, ref: stopAt })) skip.add(commit.oid);
+    } catch (error) {
+      // 远端的分支头在本地不存在：别的机器或网页上合过 PR。这里没法自己修
+      // （本机 git 走 schannel，https 不可用），所以只把话说清楚，别让人对着
+      // 一句 `Could not find <sha>` 猜。
+      console.error(`远端 ${stopAt.slice(0, 7)} 在本地不存在，说明远端有本地没有的提交。`);
+      console.error('先把它取回来再发版（在能用的环境里 `git fetch`），否则推送会因为非快进而被拒。');
+      console.error(`（原始错误：${error.message}）`);
+      process.exit(2);
+    }
   }
   const seen = new Set();
   const addTree = async (oid) => {
@@ -172,7 +182,9 @@ function buildPackfile(typeCode, body) {
 
 async function remoteSha(refName) {
   const { status, json } = await transport.apiJson(`/git/ref/${refName}`);
-  if (status === 404) return null;
+  // 404 是「这个 ref 还没有」；空仓库则对任何 ref 都回 409 "Git Repository is empty"。
+  // 两者对这里都是「远端什么都没有」，否则新建仓库后的第一次发版会在这里炸掉。
+  if (status === 404 || status === 409) return null;
   if (status !== 200) throw new Error(`查远端 ${refName} 失败：HTTP ${status}`);
   return json.object.sha;
 }
@@ -256,14 +268,21 @@ if (oldTag === tagSha) {
 
 // ---------- 5. 复查 ----------
 
-const { status, json } = await transport.apiJson('/git/matching-refs/');
-if (status !== 200) {
-  console.error(`复查失败：HTTP ${status}`);
-  process.exit(1);
+// 复查要列全远端 ref：GitHub 的 matching-refs 默认每页 30 条，翻页参数写错或漏了
+// 就会在 ref 多起来之后把一次成功的发版判成「不一致」。
+const seen = new Map();
+for (let page = 1; page <= 20; page += 1) {
+  const { status, json } = await transport.apiJson(`/git/matching-refs/?per_page=100&page=${page}`);
+  if (status !== 200) {
+    console.error(`复查失败：HTTP ${status}`);
+    process.exit(1);
+  }
+  if (!Array.isArray(json) || json.length === 0) break;
+  for (const r of json) seen.set(r.ref, r.object);
+  if (json.length < 100) break;
 }
 const wantBranch = `refs/heads/${branch}`;
 const wantTag = `refs/tags/${tag}`;
-const seen = new Map(json.map((r) => [r.ref, r.object]));
 const branchOk = seen.get(wantBranch)?.sha === branchSha;
 const tagOk = seen.get(wantTag)?.type === 'tag' && seen.get(wantTag)?.sha === tagSha;
 console.log('远端复查：');

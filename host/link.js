@@ -18,6 +18,13 @@ import { SecureChannel } from './secure-channel.js'
 
 /** How long a fresh connection may stay silent before the first hello frame. */
 export const HELLO_TIMEOUT_MS = 8_000
+/**
+ * How long a connection may take from first byte to an established Noise
+ * channel. The hello deadline alone stops covering a phone after admission;
+ * a peer that proves its device but never finishes Noise could otherwise hold
+ * one of the eight slots forever.
+ */
+export const HANDSHAKE_TIMEOUT_MS = 20_000
 /** How many phone connections one Host serves at once. */
 export const MAX_CONNECTIONS = 8
 /**
@@ -60,16 +67,18 @@ export class LinkServer {
   #authorize
   #logger
   #hostName
+  #handshakeTimeoutMs
   #server = null
   #links = new Set()
   #port = 0
 
-  constructor({ identity, createGateway, authorize, logger, hostName }) {
+  constructor({ identity, createGateway, authorize, logger, hostName, handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS }) {
     this.#identity = identity
     this.#createGateway = createGateway
     this.#authorize = authorize
     this.#logger = logger
     this.#hostName = hostName
+    this.#handshakeTimeoutMs = handshakeTimeoutMs
   }
 
   /** Port actually bound, or 0 while not listening. */
@@ -89,6 +98,7 @@ export class LinkServer {
       authorize: this.#authorize,
       logger: this.#logger,
       hostName: this.#hostName,
+      handshakeTimeoutMs: this.#handshakeTimeoutMs,
     }
   }
 
@@ -221,11 +231,7 @@ class Link {
 
   start() {
     const { logger } = this.#server.internals
-    this.#timer = setTimeout(() => {
-      logger?.warn?.('pocket-harness: a connection sent no hello in time')
-      void this.close()
-    }, HELLO_TIMEOUT_MS)
-    this.#timer.unref?.()
+    this.#armHandshakeDeadline('a connection did not send its hello in time', HELLO_TIMEOUT_MS)
     this.#transport.onClose(error => {
       if (error !== null && error !== undefined && !this.#closed) {
         logger?.info?.(`pocket-harness: link closed before admit (${error.code ?? 'unknown'})`)
@@ -315,8 +321,7 @@ class Link {
     if (this.#closed) return
     this.connectionId = connectionId
     this.clientDeviceId = clientDeviceId
-    if (this.#timer !== null) clearTimeout(this.#timer)
-    this.#timer = null
+    this.#armHandshakeDeadline('an admitted connection did not finish Noise in time')
     this.#transport.send(encodeFrame(FRAME_KIND.control, Buffer.from(JSON.stringify({
       v: HELLO_VERSION,
       accepted: true,
@@ -350,6 +355,10 @@ class Link {
       logger?.info?.(`pocket-harness: link failed (${error.code ?? error.message})`)
     })
     channel.on('established', () => {
+      // Admission and Noise both have a deadline; once the keys are proven,
+      // an idle but healthy phone may keep the link open as long as it likes.
+      if (this.#timer !== null) clearTimeout(this.#timer)
+      this.#timer = null
       // Only now is the client's static key proven; pin it if it was new.
       const remote = session.remoteStatic
       if (decision.pinnedKey === null && remote !== null) {
@@ -381,6 +390,15 @@ class Link {
     for (const pending of queued) channel.acceptFrame(pending)
     // The responder never speaks first: without message one there is nothing to do.
     channel.start()
+  }
+
+  #armHandshakeDeadline(message, ms = this.#server.internals.handshakeTimeoutMs) {
+    if (this.#timer !== null) clearTimeout(this.#timer)
+    this.#timer = setTimeout(() => {
+      this.#server.internals.logger?.warn?.(`pocket-harness: ${message}`)
+      void this.close()
+    }, ms)
+    this.#timer.unref?.()
   }
 
   async #refuse(reason) {

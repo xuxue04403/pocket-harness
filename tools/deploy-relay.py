@@ -48,6 +48,7 @@ USER = os.environ.get("POCKET_HARNESS_VPS_USER", "root")
 
 REMOTE_DIR = "/opt/pocket-harness-relay"
 UNIT_PATH = "/etc/systemd/system/pocket-harness-relay.service"
+ENV_FILE = "/etc/pocket-harness-relay.env"
 RELAY_PORT = 8080
 NGINX_LOCATION = "/ph-relay"
 DOMAIN = os.environ.get("POCKET_HARNESS_VPS_DOMAIN")
@@ -200,9 +201,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory={REMOTE_DIR}
-Environment=POCKET_HARNESS_RELAY_TOKEN={token}
 Environment=PORT={RELAY_PORT}
 Environment=HOST=127.0.0.1
+EnvironmentFile={ENV_FILE}
 ExecStart=/usr/bin/env node {REMOTE_DIR}/run.mjs
 Restart=always
 RestartSec=3
@@ -213,15 +214,27 @@ ProtectSystem=full
 [Install]
 WantedBy=multi-user.target
 """
+    # The token must not live in the unit file. A unit under /etc/systemd/system
+    # is world-readable on every stock distro (and gets shipped to `systemd-analyze
+    # security` style tooling), so an inline Environment= token is readable by any
+    # local user — a relay token is the whole access control for the room. Keep it in
+    # an env file that only root can read, and point the unit at that.
+    environment = f"POCKET_HARNESS_RELAY_TOKEN={token}\n"
     sftp = sftp_of(client)
     remote_tmp = "/tmp/pocket-harness-relay.service"
+    remote_env = "/tmp/pocket-harness-relay.env"
     with sftp.file(remote_tmp, "w") as handle:
         handle.write(unit)
+    with sftp.file(remote_env, "w") as handle:
+        handle.write(environment)
     sftp.close()
 
     code, output = run(
         client,
-        f"install -m 0644 {remote_tmp} {UNIT_PATH} && systemctl daemon-reload && "
+        f"install -m 0600 -o root -g root {remote_env} {ENV_FILE} && "
+        f"install -m 0644 {remote_tmp} {UNIT_PATH} && "
+        f"rm -f {remote_tmp} {remote_env} && "
+        f"systemctl daemon-reload && "
         f"systemctl enable --now pocket-harness-relay && sleep 2 && "
         f"systemctl is-active pocket-harness-relay && "
         f"curl -s -m 3 http://127.0.0.1:{RELAY_PORT}/healthz",
@@ -301,7 +314,13 @@ done | sort -u | head -5
             continue
 
         backup = f"{target}.bak-{int(time.time())}"
-        run(client, f"cp -p {target} {backup}", timeout=30)
+        # A discarded exit code here meant a failed `cp` still got announced as a
+        # backup, and a rejected reload then pointed the operator at a .bak that was
+        # never written. If the copy fails there is nothing worth going on with.
+        code, output = run(client, f"cp -p {target} {backup}", timeout=30)
+        if code != 0:
+            sftp.close()
+            sys.exit(f"cannot back up {target}: {output}")
         updated = raw[:offset] + snippet.encode("ascii") + raw[offset:]
         with sftp.file(target, "wb") as handle:
             handle.write(updated)
@@ -340,12 +359,21 @@ def _https_server_open(raw: bytes) -> int | None:
 
 
 def stage_verify(client: paramiko.SSHClient) -> None:
-    _code, local = run(
+    code, local = run(
         client,
         f"curl -s -m 3 http://127.0.0.1:{RELAY_PORT}/healthz; "
         f"systemctl is-active pocket-harness-relay",
     )
     log(f"on-box: {local}")
+    # The docstring promises a check that the relay is really up. Logging the output
+    # and returning 0 meant a relay that never started still printed "done" and left
+    # the operator to discover it from the phone.
+    if code != 0:
+        sys.exit(f"the on-box checks exited {code}: {local}")
+    if "active" not in local:
+        sys.exit(f"the relay unit is not active: {local}")
+    if not any(re.fullmatch(r"ok rooms=\d+", line.strip()) for line in local.splitlines()):
+        sys.exit(f"/healthz did not answer as expected: {local}")
 
 
 def main() -> None:
@@ -358,13 +386,17 @@ def main() -> None:
     parser.add_argument("--nginx", action="store_true", help="also add the reverse proxy")
     args = parser.parse_args()
 
-    if "nginx" in (args.stage, "") or args.nginx:
-        if not DOMAIN:
-            sys.exit("POCKET_HARNESS_VPS_DOMAIN is not set; the reverse proxy needs a name")
-
     stages = [s.strip() for s in args.stage.split(",") if s.strip()]
     if args.nginx and "nginx" not in stages:
         stages.insert(stages.index("verify") if "verify" in stages else len(stages), "nginx")
+
+    # `"nginx" in (args.stage, "")` is a tuple membership test: it is true only when
+    # --stage is exactly the string "nginx". A run like `--stage probe,nginx` slipped
+    # past this check, then stage_nginx interpolated DOMAIN=None into the grep command
+    # and died with a TypeError traceback halfway through the deployment. Ask the same
+    # list the dispatcher uses.
+    if "nginx" in stages and not DOMAIN:
+        sys.exit("POCKET_HARNESS_VPS_DOMAIN is not set; the reverse proxy needs a name")
 
     client = connect()
     try:

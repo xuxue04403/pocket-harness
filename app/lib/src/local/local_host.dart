@@ -91,6 +91,9 @@ class LocalHost {
   Future<void> dispose() async {
     await _lines?.cancel();
     _lines = null;
+    // Without this, a host reused after dispose would see `_lines == null` but a
+    // stale completer and short-circuit `start()` on a stream that is gone.
+    _listening = null;
     await _out.close();
   }
 }

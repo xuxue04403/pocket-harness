@@ -17,7 +17,7 @@ const arg = (name, fallback) => {
 
 const owner = arg('owner');
 const repo = arg('repo', 'pocket-harness');
-const tag = arg('tag', 'v0.1.0-beta');
+const tag = arg('tag', 'v0.1.7');
 
 if (!owner) {
   console.error('缺少 --owner');
@@ -25,6 +25,10 @@ if (!owner) {
 }
 
 const tokenFile = process.env.POCKET_HARNESS_TOKEN_FILE ?? path.join(root, 'probe', '_gh_token.txt');
+if (!fs.existsSync(tokenFile)) {
+  console.error(`找不到 token 文件 ${tokenFile}（放一个 GitHub token 进去，或用 POCKET_HARNESS_TOKEN_FILE 指路）`);
+  process.exit(2);
+}
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 const headers = {
   Authorization: `Bearer ${token}`,

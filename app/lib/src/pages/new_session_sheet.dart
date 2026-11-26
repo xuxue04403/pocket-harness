@@ -20,7 +20,7 @@ class NewSessionChoice {
 /// can be reported on the page that owns the connection.
 Future<NewSessionChoice?> showNewSessionSheet(
   BuildContext context, {
-  required Future<List<AgentPreset>> presets,
+  required Future<List<AgentPreset>> Function() presets,
   String? initialCwd,
 }) {
   return showModalBottomSheet<NewSessionChoice>(
@@ -34,7 +34,9 @@ Future<NewSessionChoice?> showNewSessionSheet(
 class _NewSessionSheet extends StatefulWidget {
   const _NewSessionSheet({required this.presets, this.initialCwd});
 
-  final Future<List<AgentPreset>> presets;
+  /// A factory rather than a future: retrying has to issue a new request, and
+  /// re-listening to the future that already failed just replays the error.
+  final Future<List<AgentPreset>> Function() presets;
   final String? initialCwd;
 
   @override
@@ -42,7 +44,7 @@ class _NewSessionSheet extends StatefulWidget {
 }
 
 class _NewSessionSheetState extends State<_NewSessionSheet> {
-  late Future<List<AgentPreset>> _presets = widget.presets;
+  late Future<List<AgentPreset>> _presets = widget.presets();
   late final TextEditingController _cwd = TextEditingController(text: widget.initialCwd ?? '');
 
   /// Null means "whatever the Host defaults to". The roster marks one preset as
@@ -103,7 +105,7 @@ class _NewSessionSheetState extends State<_NewSessionSheet> {
                             ),
                           ),
                           TextButton(
-                            onPressed: () => setState(() => _presets = widget.presets),
+                            onPressed: () => setState(() => _presets = widget.presets()),
                             child: const Text('重试'),
                           ),
                         ],

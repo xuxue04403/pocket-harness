@@ -260,7 +260,7 @@ class _BlockView extends StatelessWidget {
   }
 }
 
-class _InlineText extends StatelessWidget {
+class _InlineText extends StatefulWidget {
   const _InlineText({
     required this.spans,
     required this.style,
@@ -276,15 +276,57 @@ class _InlineText extends StatelessWidget {
   final ValueChanged<String>? onOpenLink;
 
   @override
+  State<_InlineText> createState() => _InlineTextState();
+}
+
+class _InlineTextState extends State<_InlineText> {
+  /// One recognizer per URL, kept across rebuilds.
+  ///
+  /// A streaming reply rebuilds on every delta, so allocating a recognizer per
+  /// link per frame leaves a gesture arena full of collectors that the old
+  /// `TextSpan` never disposes. Keying by URL makes the count bounded by the
+  /// links actually on screen, and [dispose] releases them with the widget.
+  final Map<String, TapGestureRecognizer> _recognizers = <String, TapGestureRecognizer>{};
+
+  TapGestureRecognizer _recognizer(String url) {
+    return _recognizers.putIfAbsent(
+      url,
+      () => TapGestureRecognizer()
+        ..onTap = () {
+          // Read through `widget` so a new callback is honoured without
+          // rebuilding the cache.
+          widget.onOpenLink?.call(url);
+        },
+    );
+  }
+
+  @override
+  void dispose() {
+    for (final recognizer in _recognizers.values) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final text = TextSpan(children: _spans(context, spans, style, theme, onOpenLink));
+    final text = TextSpan(
+      children: _spans(
+        context,
+        widget.spans,
+        widget.style,
+        widget.theme,
+        widget.onOpenLink == null ? null : _recognizer,
+      ),
+    );
     // Selectable so a phone user can copy a command out of a reply; streaming
     // text skips selection because a SelectableText that rebuilds on every
     // delta costs a selection controller per chunk.
-    if (!selectable) {
-      return Text.rich(text, style: style);
+    if (!widget.selectable) {
+      return Text.rich(text, style: widget.style);
     }
-    return SelectableText.rich(text, style: style);
+    return SelectableText.rich(text, style: widget.style);
   }
 }
 
@@ -293,7 +335,7 @@ List<InlineSpan> _spans(
   List<MdInline> spans,
   TextStyle? style,
   MarkdownTheme theme,
-  ValueChanged<String>? onOpenLink,
+  TapGestureRecognizer Function(String url)? recognizerFor,
 ) {
   final out = <InlineSpan>[];
   for (final span in spans) {
@@ -303,14 +345,14 @@ List<InlineSpan> _spans(
       case MdStrong(:final children):
         out.add(
           TextSpan(
-            children: _spans(context, children, style, theme, onOpenLink),
+            children: _spans(context, children, style, theme, recognizerFor),
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
         );
       case MdEm(:final children):
         out.add(
           TextSpan(
-            children: _spans(context, children, style, theme, onOpenLink),
+            children: _spans(context, children, style, theme, recognizerFor),
             style: const TextStyle(fontStyle: FontStyle.italic),
           ),
         );
@@ -330,9 +372,7 @@ List<InlineSpan> _spans(
           TextSpan(
             text: label,
             style: TextStyle(color: theme.link, decoration: TextDecoration.underline),
-            recognizer: onOpenLink == null
-                ? null
-                : (TapGestureRecognizer()..onTap = () => onOpenLink(url)),
+            recognizer: recognizerFor?.call(url),
           ),
         );
     }

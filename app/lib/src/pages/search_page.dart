@@ -94,11 +94,18 @@ class _SearchPageState extends State<SearchPage> {
     return '正文检索失败：$text';
   }
 
+  /// A short label for a session this page has no title for.
+  ///
+  /// The id is Host-controlled, so it is not assumed to be longer than the
+  /// prefix: a short id would throw a RangeError while building the list.
+  String _shortId(String sessionId) =>
+      sessionId.length <= 8 ? sessionId : sessionId.substring(0, 8);
+
   String _titleFor(String sessionId) {
     for (final session in widget.sessions) {
       if (session.sessionId == sessionId) return session.title;
     }
-    return '会话 ${sessionId.substring(0, 8)}…';
+    return '会话 ${_shortId(sessionId)}…';
   }
 
   @override
@@ -157,7 +164,7 @@ class _SearchPageState extends State<SearchPage> {
               leading: const Icon(Icons.chat_bubble_outline),
               title: Text(session.title, maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: Text(
-                session.cwd ?? session.sessionId.substring(0, 8),
+                session.cwd ?? _shortId(session.sessionId),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),

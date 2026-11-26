@@ -1,6 +1,6 @@
 {
   "name": "pocket-harness-relay",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "type": "module",
   "description": "A dumb relay that lets a phone reach a Pocket Harness Host across the internet.",

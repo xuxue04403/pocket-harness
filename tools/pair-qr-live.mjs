@@ -78,8 +78,17 @@ function waitForNext() {
     const poll = setInterval(() => {
       const candidate = readNewest()
       if (candidate.code !== null) {
-        const exp = Date.parse(JSON.parse(Buffer.from(candidate.code, 'base64url').toString('utf8')).exp)
-        if (exp - Date.now() >= minLeftMin * 60 * 1000) {
+        // A half-written state file or a ticket the Host rotated mid-read parses as
+        // garbage. Letting that throw inside a setInterval callback kills the whole
+        // process; just skip this round and try again on the next tick.
+        let exp = Number.NaN
+        try {
+          const ticket = JSON.parse(Buffer.from(candidate.code, 'base64url').toString('utf8'))
+          exp = Date.parse(ticket.exp)
+        } catch {
+          exp = Number.NaN
+        }
+        if (Number.isFinite(exp) && exp - Date.now() >= minLeftMin * 60 * 1000) {
           clearInterval(poll)
           resolveWait(true)
         }
