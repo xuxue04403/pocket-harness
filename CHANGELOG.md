@@ -51,7 +51,7 @@ v0.1.6 之后的一次全面复核，范围从 Host 协议层一直铺到发版�
   页面一个附件都没有。它还把一个带 shell 权限的 token 拼进 `git push` 的 URL，Git 的报错回显会
   把 token 打印到终端日志里。
 - **建 release 前先核对远端 tag**。`POST /releases` 在 tag 不存在时不报错，而是用
-  `target_commitish` 静默建出一个轻量 tag——之后注解 tag 的推送会被 zpan 的「已存在」检查拒绝，
+  `target_commitish` 静默建出一个轻量 tag——之后注解 tag 的推送会被 `publish-git.mjs` 的「已存在」检查拒绝，
   只能手工清理。现在找不到 tag 就停下并给出正确的命令。
 - **草稿 release 不再把自己锁死**。`GET /releases/tags/{tag}` 看不见草稿，而 `POST /releases`
   对同名 tag 回 422 already_exists，于是带 `--draft` 跑过一次之后永远发不出去。现在会翻一遍列表，
