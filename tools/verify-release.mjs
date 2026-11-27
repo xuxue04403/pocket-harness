@@ -18,6 +18,7 @@ const arg = (name, fallback) => {
 const owner = arg('owner');
 const repo = arg('repo', 'pocket-harness');
 const tag = arg('tag', 'v0.1.7');
+const forceDownload = process.argv.includes('--download');
 
 if (!owner) {
   console.error('缺少 --owner');
@@ -37,18 +38,26 @@ const headers = {
   'User-Agent': 'pocket-harness-release-verify',
 };
 
-async function get(url, asJson = true) {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+// 下载附件走 `asset.url`（`/releases/assets/<id>`）而不是 `browser_download_url`：
+// 后者先打到 github.com 再 302 到 objects，本机到 github.com 的连接经常在传输中途
+// 被 reset，而 api.github.com 一直通。`Accept: application/octet-stream` 让同一个
+// URL 直接回字节而不是 JSON。
+async function get(url, asJson = true, attempts = 6) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const res = await fetch(url, { headers: { ...headers, ...(asJson ? {} : { Accept: 'application/octet-stream' }) } });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      return asJson ? await res.json() : Buffer.from(await res.arrayBuffer());
+      const bytes = asJson ? null : Buffer.from(await res.arrayBuffer());
+      // 空 body 也算失败重试：连接被中途掐断时 fetch 有时不抛错，只回 0 字节。
+      if (bytes !== null && bytes.length === 0) throw new Error('空响应');
+      return asJson ? await res.json() : bytes;
     } catch (error) {
-      if (attempt === 3) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      lastError = error;
+      if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
     }
   }
-  throw new Error('unreachable');
+  throw lastError;
 }
 
 const release = await get(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`);
@@ -58,7 +67,7 @@ if (!sums) {
   process.exit(1);
 }
 
-const text = (await get(sums.browser_download_url, false)).toString('utf8');
+const text = (await get(sums.url, false)).toString('utf8');
 const expected = new Map();
 for (const line of text.split(/\r?\n/)) {
   const match = /^([0-9a-f]{64})\s+(.+)$/.exec(line.trim());
@@ -69,8 +78,9 @@ console.log(`SHA256SUMS.txt 列出 ${expected.size} 个文件`);
 
 // GitHub 给每个附件算了一个 sha256 digest，服务端算的、跟着附件一起返回。
 // 本机到 github.com 的连接经常中途断掉（下载 URL 要经过它 302 到 objects），
-// 所以有 digest 就用 digest 比对；没有才把文件下回来自己算。
-const useDigest = (asset) => typeof asset.digest === 'string' && asset.digest.startsWith('sha256:');
+// 所以有 digest 就用 digest 比对；没有才把文件下回来自己算。`--download` 强制每
+// 个附件都下回来重算，用来验证「本机能真的取到完整字节」，而不只是服务端记账。
+const useDigest = (asset) => !forceDownload && typeof asset.digest === 'string' && asset.digest.startsWith('sha256:');
 
 let bad = 0;
 let downloaded = 0;
@@ -85,7 +95,7 @@ for (const [name, want] of expected) {
   if (useDigest(asset)) {
     got = asset.digest.slice('sha256:'.length);
   } else {
-    got = crypto.createHash('sha256').update(await get(asset.browser_download_url, false)).digest('hex');
+    got = crypto.createHash('sha256').update(await get(asset.url, false)).digest('hex');
     downloaded += 1;
   }
   if (got === want) {
