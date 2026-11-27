@@ -72,6 +72,10 @@ v0.1.6 之后的一次全面复核，范围从 Host 协议层一直铺到发版�
   是个元组相等判断，只有 `--stage` 恰好等于 `"nginx"` 才成立（`--stage probe,nginx` 会绕过 DOMAIN 校验，
   随后在 `replace` 处抛 TypeError），改为真正的子串判断；`verify` 阶段不再只看日志，改断言远端返回
   `active` 且 `/healthz` 回得上 `ok rooms=N`。
+- `verify-release.mjs` 改成从 `asset.url`（`/releases/assets/<id>`）取字节，而不是
+  `browser_download_url`——后者先打 github.com 再 302 到 objects，这条出口上常常传到一半就被 reset，
+  而 api.github.com 一直通。另外加了 `--download`：强制每个附件都下回来自己算一遍 sha256，用来验证
+  「本机真的能取到完整字节」，而不只是核对服务端记的 digest。
 - `verify-release.mjs` 读 token 前先查文件在不在（不再裸 ENOENT 堆栈）；`hash-release-dir.mjs` 写
   校验清单改用 utf8（latin1 遇到非 ASCII 文件名会截断）；`reset-release-assets.mjs` 认得
   `gho_`/`ghu_`/`ghs_` 等 token 前缀；`pair-qr-live.mjs` 的轮询回调里 `JSON.parse` 包上 try/catch
